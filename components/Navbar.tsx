@@ -32,7 +32,7 @@ export default function Navbar() {
           <span className="h-9 w-9 rounded-lg bg-neon-gradient flex items-center justify-center shadow-glow">
             <GraduationCap size={20} className="text-white" />
           </span>
-          <span className="text-gradient">IT HUB</span>
+          <span className="text-gradient">IT HUB KOHLU</span>
         </Link>
 
         <nav className="hidden md:flex items-center gap-6 text-sm text-white/80">

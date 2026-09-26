@@ -13,7 +13,7 @@ export default function Footer({
     <footer id="contact" className="border-t border-white/10 mt-20">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 grid sm:grid-cols-3 gap-8">
         <div>
-          <h3 className="text-gradient font-bold text-xl mb-2">IT HUB</h3>
+          <h3 className="text-gradient font-bold text-xl mb-2">IT HUB KOHLU</h3>
           <p className="text-white/60 text-sm">
             Empowering students with in-demand IT skills for a brighter future.
           </p>
