@@ -3,14 +3,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { generateAdmissionLetter, generateRollSlipPdf } from "@/lib/pdf";
+import { generateAdmissionLetter, generateRollSlipPdf, generateIdCardPdf } from "@/lib/pdf";
+import StudentIdCard from "@/components/StudentIdCard";
 import { DOC_TYPES } from "@/types";
-import type { DashboardTab, DocumentRow, Enrollment, Feedback, HomeContent, Result, RollNumber, Student } from "@/types";
+import type { IdCard, DashboardTab, DocumentRow, Enrollment, Feedback, HomeContent, Result, RollNumber, Student } from "@/types";
 import RollSlipCard from "@/components/RollSlipCard";
 import PasswordInput from "@/components/PasswordInput";
 import {
   CheckCircle2, Clock, Download, KeyRound, LifeBuoy, LogOut, Mail, MessageSquareText, Star, Ticket, User, X, XCircle, Zap,
-  GraduationCap, FileDown, Home as HomeIcon, FileText, Ban,
+  GraduationCap, FileDown, CreditCard, Home as HomeIcon, FileText, Ban,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -79,6 +80,7 @@ export default function DashboardClient({
   results,
   siteContent,
   sitePages,
+  idCard,
 }: {
   student: Student;
   enrollment: (Enrollment & { batches: any }) | null;
@@ -88,6 +90,7 @@ export default function DashboardClient({
   dashboardTabs: DashboardTab[];
   feedback: Feedback[];
   results: Result[];
+  idCard?: IdCard | null;
   siteContent?: React.ReactNode;
   sitePages?: { id: string; title: string; content: string }[];
 }) {
@@ -95,6 +98,7 @@ export default function DashboardClient({
   const router = useRouter();
   const [downloading, setDownloading] = useState(false);
   const [downloadingRoll, setDownloadingRoll] = useState(false);
+  const [downloadingCard, setDownloadingCard] = useState(false);
   const [showBiodata, setShowBiodata] = useState(false);
   const { percent: profilePercent, missing: missingFields } = getProfileCompletion(student);
 
@@ -107,6 +111,7 @@ export default function DashboardClient({
     { key: "application", label: "My Account", icon: User },
     { key: "roll", label: "Roll Number", icon: Ticket },
     { key: "results", label: "Results", icon: GraduationCap },
+    { key: "idcard", label: "ID Card", icon: CreditCard },
     ...(sitePages ?? []).map((p) => ({ key: `page-${p.id}`, label: p.title, icon: FileText })),
     { key: "account", label: "Password", icon: KeyRound },
     { key: "help", label: "Help", icon: LifeBuoy },
@@ -198,6 +203,30 @@ export default function DashboardClient({
       doc.save(`${student.tracking_id}-admission-letter.pdf`);
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function handleDownloadCard() {
+    if (!idCard) return;
+    setDownloadingCard(true);
+    try {
+      const [photoDataUrl, logoDataUrl] = await Promise.all([
+        student.photo_url ? toDataUrl(student.photo_url) : Promise.resolve(null),
+        logoUrl ? toDataUrl(logoUrl) : Promise.resolve(null),
+      ]);
+      const doc = await generateIdCardPdf({
+        student,
+        issueDate: idCard.issue_date,
+        validUntil: idCard.valid_until,
+        photoDataUrl,
+        logoDataUrl,
+        instituteName,
+        verifyBaseUrl: typeof window !== "undefined" ? window.location.origin : "",
+        termsText: homeContent?.id_card_terms,
+      });
+      doc.save(`${student.tracking_id}-id-card.pdf`);
+    } finally {
+      setDownloadingCard(false);
     }
   }
 
@@ -463,6 +492,28 @@ export default function DashboardClient({
         )}
 
         {/* Account (view/change password) */}
+        {/* ID Card */}
+        {activeTab === "idcard" && (
+          idCard && student.application_status === "enrolled" ? (
+            <StudentIdCard
+              student={student}
+              issueDate={idCard.issue_date}
+              validUntil={idCard.valid_until}
+              instituteName={instituteName}
+              logoUrl={logoUrl}
+              termsText={homeContent?.id_card_terms}
+              onDownload={handleDownloadCard}
+              downloading={downloadingCard}
+            />
+          ) : (
+            <div className="glass-card p-6 text-center text-sm text-slate-400">
+              {student.application_status === "enrolled"
+                ? "Your ID card hasn't been issued yet. Please check back later or contact the office."
+                : "Your ID card becomes available once you are enrolled and the institute issues it."}
+            </div>
+          )
+        )}
+
         {activeTab === "account" && <AccountTab email={student.email} />}
 
         {/* Help */}

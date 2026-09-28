@@ -8,7 +8,7 @@ import BatchesSection from "@/components/BatchesSection";
 import GallerySection from "@/components/GallerySection";
 import ReviewsSection from "@/components/ReviewsSection";
 import Footer from "@/components/Footer";
-import type { Batch, Course, GalleryItem, SitePage, DashboardTab, DocumentRow, Enrollment, Feedback, HomeContent, Result, RollNumber, Student } from "@/types";
+import type { IdCard, Batch, Course, GalleryItem, SitePage, DashboardTab, DocumentRow, Enrollment, Feedback, HomeContent, Result, RollNumber, Student } from "@/types";
 
 export const revalidate = 0;
 
@@ -33,6 +33,7 @@ export default async function DashboardPage() {
     { data: courses },
     { data: reviews },
     { data: sitePages },
+    { data: idCard },
   ] = await Promise.all([
     supabase.from("students").select("*").eq("id", user.id).single(),
     supabase.from("enrollments").select("*, batches(*)").eq("student_id", user.id).maybeSingle(),
@@ -47,6 +48,7 @@ export default async function DashboardPage() {
     supabase.from("courses").select("*").order("display_order", { ascending: true }),
     supabase.from("feedback").select("*").eq("is_approved", true).order("created_at", { ascending: false }).limit(9),
     supabase.from("site_pages").select("*").eq("is_active", true).order("display_order", { ascending: true }),
+    supabase.from("id_cards").select("*").eq("student_id", user.id).maybeSingle(),
   ]);
 
   const batchList = ((batches as any[]) ?? []).map((b) => ({
@@ -83,6 +85,7 @@ export default async function DashboardPage() {
       feedback={(feedback as Feedback[]) ?? []}
       results={(results as Result[]) ?? []}
       siteContent={siteContent}
+      idCard={(idCard as IdCard | null) ?? null}
       sitePages={((sitePages as SitePage[]) ?? []).map((p) => ({ id: p.id, title: p.title, content: p.content }))}
     />
   );

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -14,6 +14,10 @@ interface BatchRow {
   course_names: string[];
 }
 
+/**
+ * Admin enrolls a student: pick course + batch (pre-filled if the student
+ * already applied), saves the enrollment and sets application_status = 'enrolled'.
+ */
 export default function EnrollModal({
   studentId,
   studentName,

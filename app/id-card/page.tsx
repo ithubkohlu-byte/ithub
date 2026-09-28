@@ -129,11 +129,11 @@ export default function IdCardPage({ searchParams }: { searchParams: { cnic?: st
 
         <div className="glass-card p-6">
           <h1 className="mb-1 font-display text-xl font-semibold text-white">Get Your Student ID Card</h1>
-          <p className="mb-5 text-sm text-slate-400">Enter your CNIC to download your ID card (only available once enrolled).</p>
+          <p className="mb-5 text-sm text-slate-400">Enter your CNIC or Tracking ID to view and download your ID card (only available once enrolled).</p>
           <form onSubmit={handleSearch} className="flex gap-2">
             <input
               className="input-field"
-              placeholder="e.g. 12345-1234567-1"
+              placeholder="CNIC or Tracking ID"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               required
@@ -148,7 +148,7 @@ export default function IdCardPage({ searchParams }: { searchParams: { cnic?: st
           <div className="glass-card mt-6 flex flex-col items-center gap-3 p-8 text-center">
             <SearchX className="text-slate-500" size={36} />
             <p className="text-sm text-slate-400">
-              No ID card found for that CNIC. Either your application isn&apos;t marked as enrolled yet, or the
+              No ID card found for that CNIC / Tracking ID. Either your application isn&apos;t marked as enrolled yet, or the
               institute hasn&apos;t issued your card yet — check back later or contact the office.
             </p>
           </div>
