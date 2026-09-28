@@ -1,135 +1,301 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import toast from "react-hot-toast";
-import { ArrowLeft, CheckCircle2, XCircle, KeyRound, Loader2 } from "lucide-react";
-import { DOC_TYPES } from "@/lib/utils";
+import { DOC_TYPES } from "@/types";
+import type { ApplicationStatus, Batch, Course, DocKey, DocStatus, DocumentRow, Student, AdditionalQualification } from "@/types";
+import { ArrowLeft, CheckCircle2, Key, Pencil, XCircle } from "lucide-react";
+import clsx from "clsx";
 
-const STATUS_COLOR: Record<string, string> = {
-  Pending: "bg-yellow-500/20 text-yellow-300",
-  Verified: "bg-accent/20 text-accent",
-  Rejected: "bg-red-500/20 text-red-300",
-  Enrolled: "bg-emerald-500/20 text-emerald-300",
-};
+type BatchRow = Batch & { course_names: string[] };
 
-export default function StudentDetailPage() {
+export default function AdminStudentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const supabase = createClient();
-  const [student, setStudent] = useState<any>(null);
-  const [documents, setDocuments] = useState<any[]>([]);
-  const [enrollment, setEnrollment] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [comments, setComments] = useState<Record<string, string>>({});
-  const [newPassword, setNewPassword] = useState("");
-  const [resetting, setResetting] = useState(false);
 
-  useEffect(() => { load(); }, [id]);
+  const [student, setStudent] = useState<Student | null>(null);
+  const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [docUrls, setDocUrls] = useState<Record<string, string>>({});
+  const [qualifications, setQualifications] = useState<AdditionalQualification[]>([]);
+  const [qualUrls, setQualUrls] = useState<Record<string, string>>({});
+  const [enrollment, setEnrollment] = useState<any>(null);
+  const [comment, setComment] = useState<Record<string, string>>({});
+  const [showReset, setShowReset] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+
+  // ---- Trade (course) change ----
+  const [editingTrade, setEditingTrade] = useState(false);
+  const [allBatches, setAllBatches] = useState<BatchRow[]>([]);
+  const [allCourses, setAllCourses] = useState<Course[]>([]);
+  const [tradeCourse, setTradeCourse] = useState("");
+  const [tradeBatch, setTradeBatch] = useState("");
+  const [tradeSaving, setTradeSaving] = useState(false);
+  const [tradeError, setTradeError] = useState<string | null>(null);
 
   async function load() {
     const { data: s } = await supabase.from("students").select("*").eq("id", id).single();
-    setStudent(s);
     const { data: docs } = await supabase.from("documents").select("*").eq("student_id", id);
-    setDocuments(docs || []);
-    const { data: enroll } = await supabase.from("enrollments").select("*, batches(*)").eq("student_id", id).maybeSingle();
-    setEnrollment(enroll);
-    setLoading(false);
+    const { data: quals } = await supabase.from("additional_qualifications").select("*").eq("student_id", id).order("created_at");
+    const { data: enr } = await supabase.from("enrollments").select("*, batches(*)").eq("student_id", id).maybeSingle();
+    setStudent(s as Student);
+    setDocuments((docs as DocumentRow[]) ?? []);
+    setQualifications((quals as AdditionalQualification[]) ?? []);
+    setEnrollment(enr);
+    setTradeCourse(enr?.course_name ?? "");
+    setTradeBatch(enr?.batch_id ?? "");
+
+    const urls: Record<string, string> = {};
+    for (const d of (docs as DocumentRow[]) ?? []) {
+      const { data: signed } = await supabase.storage.from("student_docs").createSignedUrl(d.file_path, 3600);
+      if (signed?.signedUrl) urls[d.doc_type] = signed.signedUrl;
+    }
+    setDocUrls(urls);
+
+    const qUrls: Record<string, string> = {};
+    for (const q of (quals as AdditionalQualification[]) ?? []) {
+      if (!q.document_path) continue;
+      const { data: signed } = await supabase.storage.from("student_docs").createSignedUrl(q.document_path, 3600);
+      if (signed?.signedUrl) qUrls[q.id] = signed.signedUrl;
+    }
+    setQualUrls(qUrls);
   }
 
-  async function handleDocAction(docId: string, status: "Verified" | "Rejected") {
-    const { error } = await supabase.from("documents").update({ status, admin_comment: comments[docId] || null }).eq("id", docId);
-    if (error) return toast.error(error.message);
-    toast.success(`Document ${status}`);
+  // Every course + batch (not just "open" ones) — admin needs full control to
+  // move a student to any trade/batch, including ones closed to new public applicants.
+  async function loadTradeOptions() {
+    const [{ data: batchData }, { data: courseData }] = await Promise.all([
+      supabase.from("batches").select("*, batch_courses(course_name)"),
+      supabase.from("courses").select("*").order("display_order", { ascending: true }),
+    ]);
+    const rows = ((batchData as any[]) ?? []).map((b) => ({
+      ...b,
+      course_names: Array.from(new Set([b.course_name, ...(b.batch_courses ?? []).map((c: any) => c.course_name)])),
+    })) as BatchRow[];
+    setAllBatches(rows);
+    setAllCourses((courseData as Course[]) ?? []);
+  }
+
+  function startEditTrade() {
+    setTradeError(null);
+    setTradeCourse(enrollment?.course_name ?? "");
+    setTradeBatch(enrollment?.batch_id ?? "");
+    loadTradeOptions();
+    setEditingTrade(true);
+  }
+
+  async function saveTrade() {
+    if (!tradeCourse || !tradeBatch) return setTradeError("Select a course and a batch.");
+    setTradeSaving(true);
+    setTradeError(null);
+    try {
+      // A student can only ever have ONE enrollment row — upsert on student_id
+      // updates it in place (or creates it, if this student had none yet).
+      const { error } = await supabase
+        .from("enrollments")
+        .upsert(
+          { student_id: id, batch_id: tradeBatch, course_name: tradeCourse },
+          { onConflict: "student_id" }
+        );
+      if (error) throw error;
+      setEditingTrade(false);
+      load();
+    } catch (e: any) {
+      setTradeError(e.message ?? "Could not update the trade.");
+    } finally {
+      setTradeSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function setDocStatus(docId: string, status: DocStatus, key: string) {
+    await supabase.from("documents").update({ status, admin_comment: comment[key] ?? null }).eq("id", docId);
     load();
   }
 
-  async function handleFinal(status: "Verified" | "Rejected" | "Enrolled") {
-    const { error } = await supabase.from("students").update({ status }).eq("id", id);
-    if (error) return toast.error(error.message);
-    toast.success(`Application ${status}`);
+  async function setAppStatus(status: ApplicationStatus) {
+    await supabase.from("students").update({ application_status: status }).eq("id", id);
     load();
   }
 
-  async function handleResetPassword() {
-    if (newPassword.length < 6) return toast.error("Password must be at least 6 characters");
-    setResetting(true);
+  async function resetPassword() {
+    setResetMsg(null);
     const res = await fetch("/api/admin/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ authUserId: student.auth_user_id, newPassword }),
+      body: JSON.stringify({ studentId: id, newPassword }),
     });
     const json = await res.json();
-    setResetting(false);
-    if (!res.ok) return toast.error(json.error || "Failed to reset password");
-    toast.success("Password reset successfully");
-    setNewPassword("");
+    setResetMsg(json.error ?? "Password updated successfully.");
+    if (!json.error) { setShowReset(false); setNewPassword(""); }
   }
 
-  if (loading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin text-accent" size={28} /></div>;
-  if (!student) return <p className="text-white/50">Student not found.</p>;
+  if (!student) return <p className="text-slate-500">Loading...</p>;
 
   return (
     <div>
-      <button onClick={() => router.back()} className="flex items-center gap-2 text-white/60 mb-6 text-sm">
+      <button onClick={() => router.back()} className="mb-5 flex items-center gap-1.5 text-sm text-slate-400 hover:text-white">
         <ArrowLeft size={16} /> Back
       </button>
 
-      <div className="glass rounded-2xl p-8 mb-6">
-        <div className="flex flex-wrap justify-between items-start gap-4 mb-6">
+      <div className="glass-card mb-6 flex flex-wrap items-center justify-between gap-4 p-6">
+        <div className="flex items-center gap-4">
+          {student.photo_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={student.photo_url} className="h-16 w-16 rounded-full object-cover" alt="" />
+          )}
           <div>
-            <p className="text-white/50 text-sm">{student.tracking_id}</p>
-            <h1 className="text-2xl font-bold">{student.full_name}</h1>
+            <h1 className="font-display text-xl font-semibold text-white">{student.full_name}</h1>
+            <p className="text-sm text-cyan-300">{student.tracking_id}</p>
           </div>
-          <span className={`px-4 py-1.5 rounded-full text-sm font-semibold ${STATUS_COLOR[student.status]}`}>{student.status}</span>
         </div>
-        <div className="grid sm:grid-cols-3 gap-4 text-sm">
-          <Info label="Father Name" value={student.father_name} />
-          <Info label="Email" value={student.email} />
-          <Info label="Phone" value={student.phone} />
-          <Info label="CNIC" value={student.cnic} />
-          <Info label="Father CNIC" value={student.father_cnic} />
+        <div className="flex gap-2">
+          <button onClick={() => setAppStatus("verified")} className="btn-outline !py-2 text-xs">Approve</button>
+          <button onClick={() => setAppStatus("rejected")} className="btn-outline !py-2 text-xs !border-red-500/40 !text-red-300">Reject</button>
+          <button onClick={() => setShowReset(true)} className="btn-outline !py-2 text-xs"><Key size={14} /> Reset Password</button>
+        </div>
+      </div>
+
+      {showReset && (
+        <div className="glass-card mb-6 p-6">
+          <h3 className="mb-3 font-semibold text-white">Set Temporary Password</h3>
+          {resetMsg && <p className="mb-3 text-sm text-cyan-300">{resetMsg}</p>}
+          <div className="flex gap-2">
+            <input className="input-field" type="text" placeholder="New password (6+ chars)" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+            <button onClick={resetPassword} className="btn-primary !py-2">Save</button>
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <div className="glass-card p-6">
+          <h2 className="mb-3 font-semibold text-white">Personal</h2>
+          <Info label="Father" value={student.father_name} />
           <Info label="DOB" value={student.dob} />
           <Info label="Gender" value={student.gender} />
           <Info label="City" value={student.city} />
           <Info label="Address" value={student.address} />
-          <Info label="Matric" value={`${student.matric_board} / ${student.matric_year} — ${student.matric_percent}%`} />
-          <Info label="FSC" value={`${student.fsc_board} / ${student.fsc_group} / ${student.fsc_year} — ${student.fsc_percent}%`} />
-          {enrollment && <Info label="Course / Batch" value={`${enrollment.course_name} — ${enrollment.batches?.batch_name}`} />}
+          <Info label="Student CNIC" value={student.student_cnic} />
+          <Info label="Father CNIC" value={student.father_cnic} />
+          <Info label="Phone" value={student.phone} />
+          <Info label="Email" value={student.email} />
         </div>
-        <div className="flex gap-3 mt-6">
-          <button onClick={() => handleFinal("Verified")} className="btn-neon text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
-            <CheckCircle2 size={16} /> Final Approve
-          </button>
-          <button onClick={() => handleFinal("Rejected")} className="glass text-red-300 px-4 py-2 rounded-lg text-sm flex items-center gap-2">
-            <XCircle size={16} /> Reject
-          </button>
+        <div className="glass-card p-6">
+          <h2 className="mb-3 font-semibold text-white">Academic</h2>
+          <Info label="Matric" value={`${student.matric_board} • ${student.matric_year} • ${student.matric_percentage}%`} />
+          <Info label="FSC" value={`${student.fsc_board} • ${student.fsc_group} • ${student.fsc_percentage}%`} />
+          <div className="mb-3 mt-5 flex items-center justify-between">
+            <h2 className="font-semibold text-white">Enrollment</h2>
+            {!editingTrade && (
+              <button onClick={startEditTrade} className="flex items-center gap-1 text-xs font-medium text-cyan-300 hover:text-cyan-200">
+                <Pencil size={12} /> Change Trade
+              </button>
+            )}
+          </div>
+
+          {!editingTrade ? (
+            <>
+              <Info label="Course" value={enrollment?.course_name ?? "-"} />
+              <Info label="Batch" value={enrollment?.batches?.batch_name ?? "-"} />
+              {enrollment && (
+                <div className="mt-3 flex items-center justify-between rounded-lg border border-white/10 px-3 py-2">
+                  <span className="text-xs text-slate-400">Shortlisted</span>
+                  <button
+                    onClick={async () => {
+                      await supabase.from("enrollments").update({ is_shortlisted: !enrollment.is_shortlisted }).eq("id", enrollment.id);
+                      load();
+                    }}
+                    className={clsx(
+                      "rounded-full px-3 py-1 text-xs font-semibold",
+                      enrollment.is_shortlisted ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5 text-slate-400"
+                    )}
+                  >
+                    {enrollment.is_shortlisted ? "Yes" : "No"}
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="space-y-3 rounded-lg border border-white/10 p-4">
+              {tradeError && <p className="text-xs text-red-300">{tradeError}</p>}
+              <div>
+                <label className="label">New Course</label>
+                <select
+                  className="input-field"
+                  value={tradeCourse}
+                  onChange={(e) => { setTradeCourse(e.target.value); setTradeBatch(""); }}
+                >
+                  <option value="">Select a course</option>
+                  {allCourses.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">New Batch</label>
+                <select className="input-field" value={tradeBatch} onChange={(e) => setTradeBatch(e.target.value)}>
+                  <option value="">Select a batch</option>
+                  {allBatches
+                    .filter((b) => !tradeCourse || b.course_names.includes(tradeCourse))
+                    .map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.batch_name} — {Math.max(b.seats_total - b.seats_filled, 0)} seats left
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={saveTrade} disabled={tradeSaving} className="btn-primary !py-1.5 text-xs">
+                  {tradeSaving ? "Saving..." : "Save Trade"}
+                </button>
+                <button onClick={() => setEditingTrade(false)} className="btn-outline !py-1.5 text-xs">Cancel</button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="glass rounded-2xl p-8 mb-6">
-        <h2 className="font-bold text-lg mb-4">Documents</h2>
+      <div className="glass-card mt-6 p-6">
+        <h2 className="mb-4 font-semibold text-white">Documents</h2>
         <div className="space-y-4">
           {DOC_TYPES.map((d) => {
             const doc = documents.find((x) => x.doc_type === d.key);
-            if (!doc) return null;
             return (
-              <div key={d.key} className="bg-white/5 rounded-lg p-4">
-                <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
-                  <p className="text-sm font-medium">{d.label}</p>
-                  <span className={`text-xs px-3 py-1 rounded-full ${STATUS_COLOR[doc.status]}`}>{doc.status}</span>
+              <div key={d.key} className="rounded-lg border border-white/10 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-slate-200">{d.label}</p>
+                  {docUrls[d.key] && (
+                    <a href={docUrls[d.key]} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:text-cyan-200">
+                      View File
+                    </a>
+                  )}
                 </div>
-                <a href={doc.file_url} target="_blank" rel="noreferrer" className="text-accent text-xs hover:underline">View Document</a>
-                <textarea
-                  placeholder="Admin comment (optional)"
-                  defaultValue={doc.admin_comment || ""}
-                  onChange={(e) => setComments({ ...comments, [doc.id]: e.target.value })}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mt-3"
-                  rows={2}
-                />
-                <div className="flex gap-2 mt-2">
-                  <button onClick={() => handleDocAction(doc.id, "Verified")} className="text-xs glass px-3 py-1.5 rounded-lg text-accent">Verify</button>
-                  <button onClick={() => handleDocAction(doc.id, "Rejected")} className="text-xs glass px-3 py-1.5 rounded-lg text-red-300">Reject</button>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <input
+                    className="input-field flex-1 !py-1.5 text-xs"
+                    placeholder="Comment (optional)"
+                    value={comment[d.key] ?? doc?.admin_comment ?? ""}
+                    onChange={(e) => setComment((c) => ({ ...c, [d.key]: e.target.value }))}
+                  />
+                  <button
+                    disabled={!doc}
+                    onClick={() => doc && setDocStatus(doc.id, "verified", d.key)}
+                    className={clsx("flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium",
+                      doc?.status === "verified" ? "bg-emerald-500/20 text-emerald-300" : "bg-white/5 text-slate-400 hover:bg-white/10")}
+                  >
+                    <CheckCircle2 size={13} /> Verify
+                  </button>
+                  <button
+                    disabled={!doc}
+                    onClick={() => doc && setDocStatus(doc.id, "rejected", d.key)}
+                    className={clsx("flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium",
+                      doc?.status === "rejected" ? "bg-red-500/20 text-red-300" : "bg-white/5 text-slate-400 hover:bg-white/10")}
+                  >
+                    <XCircle size={13} /> Reject
+                  </button>
                 </div>
               </div>
             );
@@ -137,28 +303,37 @@ export default function StudentDetailPage() {
         </div>
       </div>
 
-      <div className="glass rounded-2xl p-8">
-        <h2 className="font-bold text-lg mb-4 flex items-center gap-2"><KeyRound size={18} /> Reset Student Password</h2>
-        <div className="flex gap-3 max-w-md">
-          <input
-            type="password" placeholder="New temporary password" value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm"
-          />
-          <button onClick={handleResetPassword} disabled={resetting} className="btn-neon text-white px-4 py-2 rounded-lg text-sm">
-            {resetting ? <Loader2 className="animate-spin" size={16} /> : "Reset"}
-          </button>
+      {qualifications.length > 0 && (
+        <div className="glass-card mt-6 p-6">
+          <h2 className="mb-4 font-semibold text-white">Additional Qualifications (beyond FSc)</h2>
+          <div className="space-y-3">
+            {qualifications.map((q) => (
+              <div key={q.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 p-4">
+                <div>
+                  <p className="text-sm font-medium text-slate-200">{q.qualification_name}</p>
+                  <p className="text-xs text-slate-500">{q.institute_name}{q.year ? ` — ${q.year}` : ""}</p>
+                </div>
+                {qualUrls[q.id] ? (
+                  <a href={qualUrls[q.id]} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:text-cyan-200">
+                    View File
+                  </a>
+                ) : (
+                  <span className="text-xs text-amber-400">No document uploaded yet</span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <p className="text-white/40 text-xs">{label}</p>
-      <p className="font-medium">{value || "-"}</p>
+    <div className="mb-2 flex justify-between text-sm">
+      <span className="text-slate-500">{label}</span>
+      <span className="text-slate-200">{value || "-"}</span>
     </div>
   );
 }

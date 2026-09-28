@@ -1,133 +1,174 @@
 "use client";
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { Search, Printer, SearchX, Loader2, GraduationCap } from "lucide-react";
-import { formatDate } from "@/lib/utils";
 
-function RollSlipInner() {
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
+import { generateRollSlipPdf } from "@/lib/pdf";
+import RollSlipCard from "@/components/RollSlipCard";
+import { Loader2, Search, SearchX, Zap } from "lucide-react";
+import type { HomeContent, RollNumber, Student } from "@/types";
+
+async function toDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export default function RollSlipPage() {
   const supabase = createClient();
-  const params = useSearchParams();
-  const [query, setQuery] = useState(params.get("id") || "");
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
   const [notFound, setNotFound] = useState(false);
+  const [result, setResult] = useState<{ student: Student; roll: RollNumber; courseName: string; batchName: string } | null>(null);
+  const [home, setHome] = useState<HomeContent | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
-    if (params.get("id")) handleSearch(params.get("id")!);
-  }, []);
+    supabase
+      .from("home_content")
+      .select("institute_name, logo_url")
+      .eq("id", 1)
+      .maybeSingle()
+      .then(({ data }) => setHome(data as HomeContent | null));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleSearch(q?: string) {
-    const value = (q ?? query).trim();
-    if (!value) return;
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
     setLoading(true);
     setNotFound(false);
     setResult(null);
 
-    const { data: students } = await supabase
-      .from("students")
-      .select("*")
-      .or(`tracking_id.eq.${value},cnic.eq.${value}`);
+    const q = query.trim();
 
-    let studentId: string | null = students?.[0]?.id || null;
-    let student = students?.[0] || null;
+    // Try roll_no first, then join through student CNIC or tracking ID
+    const { data: byRoll } = await supabase.from("roll_numbers").select("*, students(*)").eq("roll_no", q).maybeSingle();
 
-    let rollQuery = supabase.from("roll_numbers").select("*, students(*), enrollments(*, batches(*))");
-    let rollData;
-    if (studentId) {
-      const { data } = await rollQuery.eq("student_id", studentId).maybeSingle();
-      rollData = data;
-    } else {
-      const { data } = await rollQuery.eq("roll_no", value).maybeSingle();
-      rollData = data;
-      student = data?.students || null;
+    let rollRow = byRoll;
+    if (!rollRow) {
+      const { data: student } = await supabase
+        .from("students")
+        .select("*")
+        .or(`tracking_id.eq.${q},student_cnic.eq.${q}`)
+        .maybeSingle();
+      if (student) {
+        const { data: byStudent } = await supabase
+          .from("roll_numbers")
+          .select("*, students(*)")
+          .eq("student_id", student.id)
+          .maybeSingle();
+        rollRow = byStudent ? { ...byStudent, students: student } : null;
+      }
     }
 
+    if (!rollRow) {
+      setNotFound(true);
+      setLoading(false);
+      return;
+    }
+
+    const student = (rollRow as any).students as Student;
+    const { data: enrollment } = await supabase
+      .from("enrollments")
+      .select("*, batches(*)")
+      .eq("student_id", student.id)
+      .maybeSingle();
+
+    setResult({
+      student,
+      roll: rollRow as RollNumber,
+      courseName: enrollment?.course_name ?? "-",
+      batchName: enrollment?.batches?.batch_name ?? "-",
+    });
     setLoading(false);
-    if (!rollData) return setNotFound(true);
-    setResult({ ...rollData, student });
+  }
+
+  async function handleDownload() {
+    if (!result) return;
+    setDownloading(true);
+    const [photoDataUrl, logoDataUrl] = await Promise.all([
+      result.student.photo_url ? toDataUrl(result.student.photo_url) : Promise.resolve(null),
+      home?.logo_url ? toDataUrl(home.logo_url) : Promise.resolve(null),
+    ]);
+    const doc = await generateRollSlipPdf({
+      student: result.student,
+      rollNumber: result.roll,
+      courseName: result.courseName,
+      batchName: result.batchName,
+      photoDataUrl,
+      logoDataUrl,
+      instituteName: home?.institute_name,
+      verifyBaseUrl: window.location.origin,
+    });
+    doc.save(`${result.student.tracking_id}-roll-slip.pdf`);
+    setDownloading(false);
   }
 
   return (
-    <div className="min-h-screen bg-base px-4 py-10">
-      <div className="max-w-2xl mx-auto">
-        <div className="text-center mb-10 no-print">
-          <span className="h-14 w-14 rounded-xl bg-neon-gradient flex items-center justify-center shadow-glow mb-4 mx-auto">
-            <GraduationCap size={24} className="text-white" />
-          </span>
-          <h1 className="text-3xl font-bold">Roll Number Slip</h1>
-          <p className="text-white/50 mt-2">Search by Tracking ID, CNIC, or Roll No</p>
-        </div>
+    <main className="min-h-screen px-4 py-10 md:px-6">
+      <div className="mx-auto max-w-md">
+        <Link href="/" className="mb-8 flex items-center justify-center gap-2 font-display text-lg font-semibold text-white">
+          {home?.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={home.logo_url} alt={home?.institute_name ?? "IT HUB KOHLU"} className="h-9 w-9 rounded-lg object-contain" />
+          ) : (
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-neon-line text-base-950">
+              <Zap size={18} strokeWidth={2.5} />
+            </span>
+          )}
+          {home?.institute_name ?? (
+            <>
+              IT <span className="neon-text">HUB</span>
+            </>
+          )}
+        </Link>
 
-        <div className="flex gap-3 mb-10 no-print">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            placeholder="Enter Tracking ID / CNIC / Roll No"
-            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-accent"
-          />
-          <button onClick={() => handleSearch()} disabled={loading} className="btn-neon text-white px-6 rounded-lg font-medium flex items-center gap-2">
-            {loading ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
-          </button>
+        <div className="glass-card p-6">
+          <h1 className="mb-1 font-display text-xl font-semibold text-white">Find your Roll No. Slip</h1>
+          <p className="mb-5 text-sm text-slate-400">Search by Tracking ID, CNIC, or Roll Number.</p>
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <input
+              className="input-field"
+              placeholder="e.g. ITHUB-2026-1001"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              required
+            />
+            <button className="btn-primary !px-4" disabled={loading}>
+              {loading ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
+            </button>
+          </form>
         </div>
 
         {notFound && (
-          <div className="glass rounded-2xl p-10 text-center">
-            <SearchX className="mx-auto mb-4 text-white/30" size={40} />
-            <p className="text-white/60">No roll number slip found for this search.</p>
-          </div>
-        )}
-
-        {result && (
-          <div className="glass rounded-2xl p-8">
-            <div className="flex justify-between items-center mb-6 no-print">
-              <h2 className="text-gradient font-bold text-xl">IT HUB Institute</h2>
-              <button onClick={() => window.print()} className="glass px-4 py-2 rounded-lg text-sm flex items-center gap-2">
-                <Printer size={16} /> Print
-              </button>
-            </div>
-            <div className="grid sm:grid-cols-3 gap-6 items-center">
-              <div className="text-center">
-                <div className="h-28 w-28 rounded-xl bg-white/10 mx-auto" />
-                <p className="text-xs text-white/40 mt-2">Photo</p>
-              </div>
-              <div className="sm:col-span-2 space-y-2 text-sm">
-                <Row label="Name" value={result.student?.full_name} />
-                <Row label="Father Name" value={result.student?.father_name} />
-                <Row label="CNIC" value={result.student?.cnic} />
-                <Row label="Course" value={result.enrollments?.course_name} />
-                <Row label="Batch" value={result.enrollments?.batches?.batch_name} />
-              </div>
-            </div>
-            <div className="mt-6 pt-6 border-t border-white/10 grid sm:grid-cols-4 gap-4">
-              <div className="sm:col-span-2">
-                <p className="text-white/40 text-xs">Roll No</p>
-                <p className="text-3xl font-extrabold text-gradient">{result.roll_no}</p>
-              </div>
-              <Row label="Exam Center" value={result.exam_center} />
-              <Row label="Date & Time" value={`${formatDate(result.exam_date)} ${result.exam_time || ""}`} />
-            </div>
+          <div className="glass-card mt-6 flex flex-col items-center gap-3 p-8 text-center">
+            <SearchX className="text-slate-500" size={36} />
+            <p className="text-sm text-slate-400">No roll number found for that search.</p>
           </div>
         )}
       </div>
-    </div>
-  );
-}
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-white/40 text-xs">{label}</p>
-      <p className="font-medium">{value || "-"}</p>
-    </div>
-  );
-}
-
-export default function RollSlipPage() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-base" />}>
-      <RollSlipInner />
-    </Suspense>
+      {result && (
+        <div className="mt-10">
+          <RollSlipCard
+            student={result.student}
+            rollNumber={result.roll}
+            courseName={result.courseName}
+            batchName={result.batchName}
+            instituteName={home?.institute_name}
+            logoUrl={home?.logo_url}
+            onDownload={handleDownload}
+            downloading={downloading}
+          />
+        </div>
+      )}
+    </main>
   );
 }

@@ -1,170 +1,257 @@
 "use client";
-import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import toast from "react-hot-toast";
-import { Plus, Pencil, Trash2, X } from "lucide-react";
-import { COURSES } from "@/lib/utils";
 
-const emptyForm = {
-  id: "", batch_name: "", course_name: COURSES[0], start_date: "", end_date: "",
-  status: "Draft", is_announced: false,
-};
+import { useEffect, useState, Fragment } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type { Batch, Course } from "@/types";
+import { Plus, Trash2, X, Settings2 } from "lucide-react";
+import clsx from "clsx";
+
+type BatchRow = Batch & { course_names: string[] };
+
+function addMonths(dateStr: string, months: number) {
+  const d = new Date(dateStr);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split("T")[0];
+}
 
 export default function AdminBatchesPage() {
   const supabase = createClient();
-  const [batches, setBatches] = useState<any[]>([]);
+  const [batches, setBatches] = useState<BatchRow[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState<any>(emptyForm);
-
-  useEffect(() => { load(); }, []);
+  const [form, setForm] = useState({ batch_name: "", start_date: "" });
+  const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
+  const [managingId, setManagingId] = useState<string | null>(null);
 
   async function load() {
-    const { data } = await supabase.from("batches").select("*").order("created_at", { ascending: false });
-    setBatches(data || []);
+    setLoading(true);
+    const [{ data }, { data: courseData }] = await Promise.all([
+      supabase.from("batches").select("*, batch_courses(course_name)").order("created_at", { ascending: false }),
+      supabase.from("courses").select("*").order("display_order", { ascending: true }),
+    ]);
+    const rows = ((data as any[]) ?? []).map((b) => ({
+      ...b,
+      course_names: Array.from(new Set([b.course_name, ...(b.batch_courses ?? []).map((c: any) => c.course_name)])),
+    })) as BatchRow[];
+    setBatches(rows);
+    const openCourses = ((courseData as Course[]) ?? []).filter((c) => c.is_open);
+    setCourses(openCourses);
+    setLoading(false);
   }
 
-  function openNew() {
-    setForm(emptyForm);
-    setShowForm(true);
+  useEffect(() => {
+    load();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function toggleSelected(name: string) {
+    setSelectedCourses((prev) => (prev.includes(name) ? prev.filter((c) => c !== name) : [...prev, name]));
   }
 
-  function openEdit(b: any) {
-    setForm({ ...b });
-    setShowForm(true);
-  }
+  async function createBatch() {
+    if (!form.batch_name || !form.start_date || selectedCourses.length === 0) return;
+    const { data, error } = await supabase
+      .from("batches")
+      .insert({
+        batch_name: form.batch_name,
+        course_name: selectedCourses[0], // primary course; trigger also adds it to batch_courses
+        start_date: form.start_date,
+        end_date: addMonths(form.start_date, 3),
+        seats_total: 50,
+        seats_filled: 0,
+        status: "draft",
+        is_announced: false,
+      })
+      .select()
+      .single();
+    if (error || !data) return;
 
-  function autoEndDate(start: string) {
-    if (!start) return "";
-    const d = new Date(start);
-    d.setMonth(d.getMonth() + 3);
-    return d.toISOString().split("T")[0];
-  }
-
-  async function handleSave() {
-    if (!form.batch_name || !form.start_date) return toast.error("Fill batch name and start date");
-    const payload = {
-      batch_name: form.batch_name,
-      course_name: form.course_name,
-      start_date: form.start_date,
-      end_date: form.end_date || autoEndDate(form.start_date),
-      status: form.status,
-      is_announced: form.is_announced,
-      seats_total: 50,
-    };
-    if (form.id) {
-      const { error } = await supabase.from("batches").update(payload).eq("id", form.id);
-      if (error) return toast.error(error.message);
-      toast.success("Batch updated");
-    } else {
-      const { error } = await supabase.from("batches").insert(payload);
-      if (error) return toast.error(error.message);
-      toast.success("Batch created");
+    // Any remaining selected courses beyond the primary one.
+    const extra = selectedCourses.slice(1);
+    if (extra.length > 0) {
+      await supabase.from("batch_courses").insert(extra.map((course_name) => ({ batch_id: data.id, course_name })));
     }
+
+    setForm({ batch_name: "", start_date: "" });
+    setSelectedCourses([]);
     setShowForm(false);
     load();
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Delete this batch?")) return;
-    const { error } = await supabase.from("batches").delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    toast.success("Deleted");
+  async function toggleAnnounce(b: Batch) {
+    await supabase.from("batches").update({ is_announced: !b.is_announced }).eq("id", b.id);
+    load();
+  }
+
+  async function updateStatus(b: Batch, status: Batch["status"]) {
+    await supabase.from("batches").update({ status }).eq("id", b.id);
+    load();
+  }
+
+  async function deleteBatch(id: string) {
+    if (!confirm("Delete this batch? This cannot be undone.")) return;
+    await supabase.from("batches").delete().eq("id", id);
+    load();
+  }
+
+  // Add/assign a course to an existing batch (satisfies "admin can assign a new course to a batch").
+  async function assignCourse(batch: BatchRow, courseName: string) {
+    await supabase.from("batch_courses").insert({ batch_id: batch.id, course_name: courseName });
+    load();
+  }
+
+  // Remove a course from a batch. The primary course_name can't be removed this way —
+  // change it by editing the batch's primary course instead (rare; delete/recreate is simplest).
+  async function removeCourse(batch: BatchRow, courseName: string) {
+    if (courseName === batch.course_name) return;
+    await supabase.from("batch_courses").delete().eq("batch_id", batch.id).eq("course_name", courseName);
     load();
   }
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-2xl font-bold">Batches</h1>
-        <button onClick={openNew} className="btn-neon text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="font-display text-2xl font-semibold text-white">Batch Management</h1>
+        <button onClick={() => setShowForm(true)} className="btn-primary !py-2">
           <Plus size={16} /> New Batch
         </button>
       </div>
 
-      <div className="glass rounded-2xl p-6 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-white/40 border-b border-white/10">
-              <th className="py-2 pr-4">Batch</th>
-              <th className="py-2 pr-4">Course</th>
-              <th className="py-2 pr-4">Dates</th>
-              <th className="py-2 pr-4">Seats</th>
-              <th className="py-2 pr-4">Status</th>
-              <th className="py-2 pr-4">Announced</th>
-              <th className="py-2 pr-4">Actions</th>
+      {showForm && (
+        <div className="glass-card mb-6 p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="font-semibold text-white">Create Batch</h2>
+            <button onClick={() => setShowForm(false)}><X size={18} className="text-slate-400" /></button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <input className="input-field" placeholder="Batch Name (e.g. Batch 4)" value={form.batch_name}
+              onChange={(e) => setForm({ ...form, batch_name: e.target.value })} />
+            <input className="input-field" type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
+          </div>
+
+          <div className="mt-4">
+            <p className="label mb-2">Courses available in this batch</p>
+            {courses.length === 0 && <p className="text-xs text-amber-400">No open courses — add one first from Courses.</p>}
+            <div className="flex flex-wrap gap-2">
+              {courses.map((c) => {
+                const checked = selectedCourses.includes(c.name);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleSelected(c.name)}
+                    className={clsx(
+                      "rounded-full border px-3.5 py-1.5 text-xs font-medium transition",
+                      checked ? "border-neon-cyan/60 bg-neon-cyan/10 text-cyan-200" : "border-white/10 text-slate-400 hover:border-white/25"
+                    )}
+                  >
+                    {c.name}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-slate-500">Select every course this batch should be enrolled for. The first one picked becomes the primary course.</p>
+          </div>
+
+          <button onClick={createBatch} className="btn-primary mt-4 !py-2">Save Batch</button>
+        </div>
+      )}
+
+      <div className="glass-card overflow-x-auto scroll-thin p-0">
+        <table className="w-full min-w-[900px] text-left text-sm">
+          <thead className="border-b border-white/10 text-xs uppercase text-slate-500">
+            <tr>
+              <th className="px-5 py-3">Batch</th>
+              <th className="px-5 py-3">Courses</th>
+              <th className="px-5 py-3">Dates</th>
+              <th className="px-5 py-3">Seats</th>
+              <th className="px-5 py-3">Status</th>
+              <th className="px-5 py-3">Announced</th>
+              <th className="px-5 py-3"></th>
             </tr>
           </thead>
           <tbody>
+            {loading && <tr><td className="px-5 py-6 text-slate-500" colSpan={7}>Loading...</td></tr>}
+            {!loading && batches.length === 0 && <tr><td className="px-5 py-6 text-slate-500" colSpan={7}>No batches yet.</td></tr>}
             {batches.map((b) => (
-              <tr key={b.id} className="border-b border-white/5">
-                <td className="py-3 pr-4 font-medium">{b.batch_name}</td>
-                <td className="py-3 pr-4">{b.course_name}</td>
-                <td className="py-3 pr-4 text-white/50 text-xs">{b.start_date} → {b.end_date}</td>
-                <td className="py-3 pr-4">{b.seats_filled}/{b.seats_total}</td>
-                <td className="py-3 pr-4">{b.seats_filled >= b.seats_total ? "Closed" : b.status}</td>
-                <td className="py-3 pr-4">{b.is_announced ? "Yes" : "No"}</td>
-                <td className="py-3 pr-4 flex gap-2">
-                  <button onClick={() => openEdit(b)} className="p-2 glass rounded-lg"><Pencil size={14} /></button>
-                  <button onClick={() => handleDelete(b.id)} className="p-2 glass rounded-lg text-red-400"><Trash2 size={14} /></button>
-                </td>
-              </tr>
+              <Fragment key={b.id}>
+                <tr className="border-b border-white/5">
+                  <td className="px-5 py-3 font-medium text-white">{b.batch_name}</td>
+                  <td className="px-5 py-3 text-slate-300">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {b.course_names.map((c) => (
+                        <span key={c} className="rounded-full bg-white/5 px-2 py-0.5 text-xs">{c}</span>
+                      ))}
+                      <button
+                        onClick={() => setManagingId(managingId === b.id ? null : b.id)}
+                        className="ml-1 flex items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-xs text-cyan-300 hover:border-white/25"
+                      >
+                        <Settings2 size={12} /> Manage
+                      </button>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3 text-xs text-slate-400">{b.start_date} → {b.end_date}</td>
+                  <td className="px-5 py-3 text-slate-300">{b.seats_filled}/{b.seats_total}</td>
+                  <td className="px-5 py-3">
+                    <select
+                      value={b.status}
+                      onChange={(e) => updateStatus(b, e.target.value as Batch["status"])}
+                      className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-slate-200"
+                    >
+                      <option value="draft">Draft</option>
+                      <option value="open">Open</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                  </td>
+                  <td className="px-5 py-3">
+                    <button
+                      onClick={() => toggleAnnounce(b)}
+                      className={clsx("h-6 w-11 rounded-full transition relative", b.is_announced ? "bg-neon-line" : "bg-white/10")}
+                    >
+                      <span className={clsx("absolute top-0.5 h-5 w-5 rounded-full bg-white transition", b.is_announced ? "left-5" : "left-0.5")} />
+                    </button>
+                  </td>
+                  <td className="px-5 py-3">
+                    <button onClick={() => deleteBatch(b.id)} className="text-slate-500 hover:text-red-400">
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
+                </tr>
+                {managingId === b.id && (
+                  <tr className="border-b border-white/5 bg-white/[0.02]">
+                    <td colSpan={7} className="px-5 py-4">
+                      <p className="mb-2 text-xs uppercase text-slate-500">Assign / remove courses for {b.batch_name}</p>
+                      <div className="flex flex-wrap gap-2">
+                        {courses.map((c) => {
+                          const active = b.course_names.includes(c.name);
+                          const isPrimary = c.name === b.course_name;
+                          return (
+                            <button
+                              key={c.id}
+                              onClick={() => (active ? removeCourse(b, c.name) : assignCourse(b, c.name))}
+                              disabled={isPrimary}
+                              title={isPrimary ? "Primary course — cannot be removed here" : undefined}
+                              className={clsx(
+                                "rounded-full border px-3.5 py-1.5 text-xs font-medium transition",
+                                active
+                                  ? "border-neon-cyan/60 bg-neon-cyan/10 text-cyan-200"
+                                  : "border-white/10 text-slate-400 hover:border-white/25",
+                                isPrimary && "cursor-not-allowed opacity-70"
+                              )}
+                            >
+                              {c.name}{isPrimary ? " (primary)" : ""}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
-
-      {showForm && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
-          <div className="glass rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="font-bold text-lg">{form.id ? "Edit Batch" : "New Batch"}</h2>
-              <button onClick={() => setShowForm(false)}><X size={20} /></button>
-            </div>
-            <div className="space-y-4">
-              <Field label="Batch Name" value={form.batch_name} onChange={(v: string) => setForm({ ...form, batch_name: v })} />
-              <label className="block">
-                <span className="text-sm text-white/70 mb-1.5 block">Course</span>
-                <select value={form.course_name} onChange={(e) => setForm({ ...form, course_name: e.target.value })}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5">
-                  {COURSES.map((c) => <option key={c} value={c} className="bg-base">{c}</option>)}
-                </select>
-              </label>
-              <Field label="Start Date" type="date" value={form.start_date}
-                onChange={(v: string) => setForm({ ...form, start_date: v, end_date: form.end_date || autoEndDate(v) })} />
-              <Field label="End Date" type="date" value={form.end_date} onChange={(v: string) => setForm({ ...form, end_date: v })} />
-              <label className="block">
-                <span className="text-sm text-white/70 mb-1.5 block">Seats Total</span>
-                <input disabled value={50} className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-white/40" />
-              </label>
-              <label className="block">
-                <span className="text-sm text-white/70 mb-1.5 block">Status</span>
-                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5">
-                  {["Draft", "Open", "Closed"].map((s) => <option key={s} value={s} className="bg-base">{s}</option>)}
-                </select>
-              </label>
-              <label className="flex items-center justify-between bg-white/5 rounded-lg p-4">
-                <div>
-                  <p className="text-sm font-medium">Announce Publicly</p>
-                  <p className="text-xs text-white/40">If ON, batch will be visible to public</p>
-                </div>
-                <input type="checkbox" checked={form.is_announced} onChange={(e) => setForm({ ...form, is_announced: e.target.checked })} className="h-5 w-5 accent-accent" />
-              </label>
-            </div>
-            <button onClick={handleSave} className="btn-neon text-white w-full py-2.5 rounded-lg font-medium mt-6">Save Batch</button>
-          </div>
-        </div>
-      )}
     </div>
-  );
-}
-
-function Field({ label, ...props }: any) {
-  return (
-    <label className="block">
-      <span className="text-sm text-white/70 mb-1.5 block">{label}</span>
-      <input {...props} onChange={(e: any) => props.onChange(e.target.value)}
-        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-white" />
-    </label>
   );
 }
