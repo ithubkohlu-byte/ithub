@@ -1,4 +1,4 @@
-export type ApplicationStatus = "pending" | "verified" | "rejected" | "enrolled";
+export type ApplicationStatus = "pending" | "verified" | "rejected" | "enrolled" | "struck_off";
 export type DocStatus = "pending" | "verified" | "rejected";
 export type BatchStatus = "draft" | "open" | "closed";
 
@@ -94,6 +94,7 @@ export interface Student {
   auth_provider: "password" | "google" | "facebook" | "github";
   application_status: ApplicationStatus;
   onboarding_step: number;
+  id_card_rejected?: boolean;
   created_at: string;
 }
 

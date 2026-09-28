@@ -48,44 +48,22 @@ export default function RollSlipPage() {
 
     const q = query.trim();
 
-    // Try roll_no first, then join through student CNIC or tracking ID
-    const { data: byRoll } = await supabase.from("roll_numbers").select("*, students(*)").eq("roll_no", q).maybeSingle();
+    // Anonymous visitors can't read the tables directly (RLS), so search goes
+    // through a secure database function (Tracking ID, CNIC or Roll No).
+    const { data, error } = await supabase.rpc("lookup_roll_slip", { p_query: q });
+    const found = data as { student: Student; roll: RollNumber; course_name: string | null; batch_name: string | null } | null;
 
-    let rollRow = byRoll;
-    if (!rollRow) {
-      const { data: student } = await supabase
-        .from("students")
-        .select("*")
-        .or(`tracking_id.eq.${q},student_cnic.eq.${q}`)
-        .maybeSingle();
-      if (student) {
-        const { data: byStudent } = await supabase
-          .from("roll_numbers")
-          .select("*, students(*)")
-          .eq("student_id", student.id)
-          .maybeSingle();
-        rollRow = byStudent ? { ...byStudent, students: student } : null;
-      }
-    }
-
-    if (!rollRow) {
+    if (error || !found) {
       setNotFound(true);
       setLoading(false);
       return;
     }
 
-    const student = (rollRow as any).students as Student;
-    const { data: enrollment } = await supabase
-      .from("enrollments")
-      .select("*, batches(*)")
-      .eq("student_id", student.id)
-      .maybeSingle();
-
     setResult({
-      student,
-      roll: rollRow as RollNumber,
-      courseName: enrollment?.course_name ?? "-",
-      batchName: enrollment?.batches?.batch_name ?? "-",
+      student: found.student,
+      roll: found.roll,
+      courseName: found.course_name ?? "-",
+      batchName: found.batch_name ?? "-",
     });
     setLoading(false);
   }
@@ -132,11 +110,11 @@ export default function RollSlipPage() {
 
         <div className="glass-card p-6">
           <h1 className="mb-1 font-display text-xl font-semibold text-white">Find your Roll No. Slip</h1>
-          <p className="mb-5 text-sm text-slate-400">Search by Tracking ID, CNIC, or Roll Number.</p>
+          <p className="mb-5 text-sm text-slate-400">Enter your Tracking ID or CNIC to see your roll number and download the slip as PDF.</p>
           <form onSubmit={handleSearch} className="flex gap-2">
             <input
               className="input-field"
-              placeholder="e.g. ITHUB-2026-1001"
+              placeholder="Tracking ID or CNIC (e.g. 12345-1234567-1)"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               required

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import Papa from "papaparse";
-import { UploadCloud, CheckCircle2, XCircle } from "lucide-react";
+import { UploadCloud, CheckCircle2, XCircle, UserPlus } from "lucide-react";
+import EnrollModal from "@/components/admin/EnrollModal";
 
 interface ShortlistRow {
   tracking_id: string;
@@ -22,6 +23,9 @@ export default function AdminShortlistPage() {
   const [list, setList] = useState<any[]>([]);
   const [bulkLog, setBulkLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<{ id: string; full_name: string; tracking_id: string; application_status: string }[]>([]);
+  const [pick, setPick] = useState("");
+  const [enrollOpen, setEnrollOpen] = useState(false);
 
   async function load() {
     const { data } = await supabase
@@ -29,6 +33,12 @@ export default function AdminShortlistPage() {
       .select("*, students(full_name, tracking_id), batches(batch_name, seats_total, seats_filled)")
       .order("enrolled_at", { ascending: false });
     setList(data ?? []);
+    const { data: st } = await supabase
+      .from("students")
+      .select("id, full_name, tracking_id, application_status")
+      .neq("application_status", "enrolled")
+      .order("created_at", { ascending: false });
+    setPending((st as any[]) ?? []);
   }
 
   useEffect(() => {
@@ -93,6 +103,31 @@ export default function AdminShortlistPage() {
         Applications are always accepted, even once a batch&apos;s seats are full. Once you&apos;re ready to finalize who&apos;s
         actually in, mark them here — one at a time or in bulk via CSV.
       </p>
+
+      <div className="glass-card mb-6 p-6">
+        <h2 className="mb-1 flex items-center gap-2 font-semibold text-white"><UserPlus size={17} /> Enroll a Student</h2>
+        <p className="mb-4 text-xs text-slate-400">
+          Pick any student who isn&apos;t enrolled yet, choose their course and batch, and enroll them directly.
+          They then appear in the list below and in Students / ID Cards as Enrolled.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <select className="input-field min-w-[240px] flex-1" value={pick} onChange={(e) => setPick(e.target.value)}>
+            <option value="">— Select student ({pending.length} not enrolled) —</option>
+            {pending.map((s) => (
+              <option key={s.id} value={s.id}>{s.full_name} ({s.tracking_id}) — {s.application_status.replace("_", " ")}</option>
+            ))}
+          </select>
+          <button onClick={() => setEnrollOpen(true)} disabled={!pick} className="btn-primary !py-2">Enroll Student</button>
+        </div>
+      </div>
+      {enrollOpen && pick && (
+        <EnrollModal
+          studentId={pick}
+          studentName={pending.find((p) => p.id === pick)?.full_name ?? "student"}
+          onClose={() => setEnrollOpen(false)}
+          onDone={() => { setEnrollOpen(false); setPick(""); load(); }}
+        />
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="glass-card p-6">

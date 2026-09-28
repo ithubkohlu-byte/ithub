@@ -645,3 +645,129 @@ export async function generateRollSlipPdf({
 
   return doc;
 }
+
+// ---------------------------------------------------------------------------
+// Result sheet (public /result search + dashboard) — same header style as the
+// roll slip so all documents look like one family.
+// ---------------------------------------------------------------------------
+export interface ResultSheetInput {
+  student: { full_name: string; father_name: string; tracking_id: string; student_cnic: string };
+  courseName?: string | null;
+  batchName?: string | null;
+  rollNo?: string | null;
+  results: {
+    title: string;
+    result_status: string;
+    marks_obtained: number | null;
+    marks_total: number | null;
+    remarks: string | null;
+    created_at: string;
+  }[];
+  photoDataUrl?: string | null;
+  logoDataUrl?: string | null;
+  instituteName?: string;
+}
+
+export async function generateResultPdf({
+  student,
+  courseName,
+  batchName,
+  rollNo,
+  results,
+  photoDataUrl,
+  logoDataUrl,
+  instituteName = "IT HUB Kohlu",
+}: ResultSheetInput): Promise<jsPDF> {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const pw = doc.internal.pageSize.getWidth();
+  const ph = doc.internal.pageSize.getHeight();
+
+  doc.setFillColor(10, 14, 26);
+  doc.rect(0, 0, pw, 98, "F");
+  doc.setFillColor(34, 211, 238);
+  doc.rect(0, 96, pw, 3, "F");
+  if (logoDataUrl) doc.addImage(logoDataUrl, "PNG", 40, 22, 56, 56);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(25);
+  const cx = pw / 2;
+  const maxW = (cx - 108) * 2;
+  const nw = drawSpacedCentered(doc, instituteName.toUpperCase(), cx, 52, 0.14, maxW, 12);
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(1.4);
+  doc.line(cx - nw / 2, 56, cx + nw / 2, 56);
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "normal");
+  drawSpacedCentered(doc, "Result Sheet", cx, 74, 0.22, maxW, 8);
+
+  let y = 138;
+  doc.setTextColor(20, 20, 20);
+  if (photoDataUrl) doc.addImage(photoDataUrl, "JPEG", pw - 130, 110, 90, 100);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("Candidate Information", 40, y);
+  y += 22;
+  const row = (label: string, value: string) => {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.5);
+    doc.text(label, 40, y);
+    doc.setFont("helvetica", "normal");
+    const lines = doc.splitTextToSize(value || "-", y < 215 ? pw - 130 - 200 - 12 : pw - 240);
+    doc.text(lines, 200, y);
+    y += 22 + (lines.length - 1) * 13;
+  };
+  row("Full Name:", student.full_name);
+  row("Father's Name:", student.father_name);
+  row("CNIC:", student.student_cnic);
+  row("Tracking ID:", student.tracking_id);
+  if (rollNo) row("Roll Number:", rollNo);
+  row("Course:", courseName ?? "-");
+  row("Batch:", batchName ?? "-");
+
+  y = Math.max(y, 232) + 12;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("Result Details", 40, y);
+  y += 12;
+
+  for (const r of results) {
+    if (y > ph - 150) {
+      doc.addPage();
+      y = 60;
+    }
+    y += 10;
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.6);
+    doc.roundedRect(40, y, pw - 80, r.remarks ? 84 : 66, 6, 6);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text(r.title || "Result", 54, y + 22);
+    const st = (r.result_status || "pending").toUpperCase();
+    const good = ["PASS", "MERIT"].includes(st);
+    const bad = st === "FAIL";
+    doc.setTextColor(good ? 5 : bad ? 200 : 160, good ? 120 : bad ? 30 : 110, good ? 70 : bad ? 30 : 0);
+    doc.text(st, pw - 54 - doc.getTextWidth(st), y + 22);
+    doc.setTextColor(20, 20, 20);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10.5);
+    const marks =
+      r.marks_obtained != null
+        ? `Marks: ${r.marks_obtained}${r.marks_total != null ? ` / ${r.marks_total}` : ""}${
+            r.marks_total ? `  (${((Number(r.marks_obtained) / Number(r.marks_total)) * 100).toFixed(1)}%)` : ""
+          }`
+        : "Marks: -";
+    doc.text(marks, 54, y + 44);
+    doc.text(`Date: ${new Date(r.created_at).toLocaleDateString()}`, pw - 54 - 120, y + 44);
+    if (r.remarks) {
+      doc.setFontSize(9.5);
+      doc.text(`Remarks: ${doc.splitTextToSize(r.remarks, pw - 130)[0]}`, 54, y + 64);
+    }
+    y += r.remarks ? 84 : 66;
+  }
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(120, 120, 120);
+  doc.text(`Generated ${new Date().toLocaleString()} — computer generated result sheet.`, 40, ph - 30);
+  return doc;
+}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  Home, BookOpen, Layers, Image as ImageIcon, Star, Ticket, CreditCard, FileText, Mail, LogIn, Hexagon, Wifi,
+  Home, GraduationCap, BookOpen, Layers, Image as ImageIcon, Star, Ticket, CreditCard, FileText, Mail, LogIn, Hexagon, Wifi,
   type LucideIcon,
 } from "lucide-react";
 import type { SitePage } from "@/types";
@@ -17,12 +17,14 @@ type Item = { href: string; label: string; icon: LucideIcon };
 export default function Navbar({
   showRollSlipLink,
   showIdCardLink,
+  showResultsLink,
   logoUrl,
   instituteName = "IT HUB KOHLU",
   sitePages = [],
 }: {
   showRollSlipLink: boolean;
   showIdCardLink?: boolean;
+  showResultsLink?: boolean;
   logoUrl?: string | null;
   instituteName?: string;
   sitePages?: SitePage[];
@@ -36,6 +38,7 @@ export default function Navbar({
     { href: "/#gallery", label: "Gallery", icon: ImageIcon },
     { href: "/#reviews", label: "Reviews", icon: Star },
     ...(showRollSlipLink ? [{ href: "/roll-slip", label: "Roll Slip", icon: Ticket }] : []),
+    ...(showResultsLink ? [{ href: "/result", label: "Results", icon: GraduationCap }] : []),
     ...(showIdCardLink ? [{ href: "/id-card", label: "ID Card", icon: CreditCard }] : []),
     ...sitePages.map((p) => ({ href: `/page/${p.slug}`, label: p.title, icon: FileText })),
     { href: "/#contact", label: "Contact", icon: Mail },

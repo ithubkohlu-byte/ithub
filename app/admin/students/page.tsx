@@ -4,10 +4,19 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Student, Course } from "@/types";
-import { Download, Eye, Search } from "lucide-react";
+import { Ban, Download, Eye, Search, UserCheck, UserX } from "lucide-react";
+import EnrollModal from "@/components/admin/EnrollModal";
 import * as XLSX from "xlsx";
 
 type Row = Student & { enrollments: { course_name: string; batches: { batch_name: string } }[] };
+
+const STATUS_BADGE: Record<string, string> = {
+  pending: "bg-amber-500/15 text-amber-300",
+  verified: "bg-cyan-500/15 text-cyan-300",
+  rejected: "bg-red-500/15 text-red-300",
+  enrolled: "bg-emerald-500/15 text-emerald-300",
+  struck_off: "bg-orange-500/15 text-orange-300",
+};
 
 export default function AdminStudentsPage() {
   const supabase = createClient();
@@ -17,22 +26,32 @@ export default function AdminStudentsPage() {
   const [search, setSearch] = useState("");
   const [courseFilter, setCourseFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [enrollFor, setEnrollFor] = useState<Row | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    const [{ data }, { data: courseData }] = await Promise.all([
+      supabase.from("students").select("*, enrollments(course_name, batches(batch_name))").order("created_at", { ascending: false }),
+      supabase.from("courses").select("*").order("display_order", { ascending: true }),
+    ]);
+    setRows((data as Row[]) ?? []);
+    setCourses((courseData as Course[]) ?? []);
+    setLoading(false);
+  }
 
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const [{ data }, { data: courseData }] = await Promise.all([
-        supabase
-          .from("students")
-          .select("*, enrollments(course_name, batches(batch_name))")
-          .order("created_at", { ascending: false }),
-        supabase.from("courses").select("*").order("display_order", { ascending: true }),
-      ]);
-      setRows((data as Row[]) ?? []);
-      setCourses((courseData as Course[]) ?? []);
-      setLoading(false);
-    })();
+    load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function setStatus(r: Row, status: "rejected" | "struck_off") {
+    const label = status === "rejected" ? "Reject" : "Strike off";
+    if (!confirm(`${label} ${r.full_name}?`)) return;
+    setBusyId(r.id);
+    await supabase.from("students").update({ application_status: status }).eq("id", r.id);
+    setBusyId(null);
+    load();
+  }
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -117,11 +136,12 @@ export default function AdminStudentsPage() {
           <option value="verified">Verified</option>
           <option value="rejected">Rejected</option>
           <option value="enrolled">Enrolled</option>
+          <option value="struck_off">Struck Off</option>
         </select>
       </div>
 
       <div className="glass-card overflow-x-auto scroll-thin p-0">
-        <table className="w-full min-w-[1000px] text-left text-sm">
+        <table className="w-full min-w-[1180px] text-left text-sm">
           <thead className="border-b border-white/10 text-xs uppercase text-slate-500">
             <tr>
               <th className="px-4 py-3">Photo</th>
@@ -132,7 +152,7 @@ export default function AdminStudentsPage() {
               <th className="px-4 py-3">Course</th>
               <th className="px-4 py-3">Batch</th>
               <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3"></th>
+              <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -154,17 +174,50 @@ export default function AdminStudentsPage() {
                 <td className="px-4 py-3 text-cyan-300">{r.tracking_id}</td>
                 <td className="px-4 py-3 text-slate-400">{r.enrollments?.[0]?.course_name ?? "-"}</td>
                 <td className="px-4 py-3 text-slate-400">{r.enrollments?.[0]?.batches?.batch_name ?? "-"}</td>
-                <td className="px-4 py-3 capitalize text-slate-300">{r.application_status}</td>
                 <td className="px-4 py-3">
-                  <Link href={`/admin/students/${r.id}`} className="text-cyan-300 hover:text-cyan-200">
-                    <Eye size={16} />
-                  </Link>
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${STATUS_BADGE[r.application_status] ?? "bg-white/10 text-slate-300"}`}>
+                    {r.application_status.replace("_", " ")}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1.5">
+                    {r.application_status !== "enrolled" && (
+                      <button onClick={() => setEnrollFor(r)} disabled={busyId === r.id} title="Enroll student"
+                        className="flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-1 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/25">
+                        <UserCheck size={13} /> Enroll
+                      </button>
+                    )}
+                    {r.application_status !== "rejected" && (
+                      <button onClick={() => setStatus(r, "rejected")} disabled={busyId === r.id} title="Reject student"
+                        className="flex items-center gap-1 rounded-md bg-red-500/15 px-2 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/25">
+                        <UserX size={13} /> Reject
+                      </button>
+                    )}
+                    {r.application_status !== "struck_off" && (
+                      <button onClick={() => setStatus(r, "struck_off")} disabled={busyId === r.id} title="Strike off student"
+                        className="flex items-center gap-1 rounded-md bg-orange-500/15 px-2 py-1 text-xs font-semibold text-orange-300 hover:bg-orange-500/25">
+                        <Ban size={13} /> Struck Off
+                      </button>
+                    )}
+                    <Link href={`/admin/students/${r.id}`} className="ml-1 text-cyan-300 hover:text-cyan-200" title="View details">
+                      <Eye size={16} />
+                    </Link>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {enrollFor && (
+        <EnrollModal
+          studentId={enrollFor.id}
+          studentName={enrollFor.full_name}
+          onClose={() => setEnrollFor(null)}
+          onDone={() => { setEnrollFor(null); load(); }}
+        />
+      )}
     </div>
   );
 }

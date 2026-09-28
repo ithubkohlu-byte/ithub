@@ -10,7 +10,7 @@ import RollSlipCard from "@/components/RollSlipCard";
 import PasswordInput from "@/components/PasswordInput";
 import {
   CheckCircle2, Clock, Download, KeyRound, LifeBuoy, LogOut, Mail, MessageSquareText, Star, Ticket, User, X, XCircle, Zap,
-  GraduationCap, FileDown,
+  GraduationCap, FileDown, Home as HomeIcon, FileText, Ban,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -61,6 +61,7 @@ const STATUS_STYLES: Record<string, string> = {
   verified: "bg-cyan-500/15 text-cyan-300",
   rejected: "bg-red-500/15 text-red-300",
   enrolled: "bg-emerald-500/15 text-emerald-300",
+  struck_off: "bg-orange-500/15 text-orange-300",
 };
 
 const DEFAULT_INSTITUTE_NAME = "IT HUB Kohlu";
@@ -76,6 +77,8 @@ export default function DashboardClient({
   dashboardTabs,
   feedback,
   results,
+  siteContent,
+  sitePages,
 }: {
   student: Student;
   enrollment: (Enrollment & { batches: any }) | null;
@@ -85,6 +88,8 @@ export default function DashboardClient({
   dashboardTabs: DashboardTab[];
   feedback: Feedback[];
   results: Result[];
+  siteContent?: React.ReactNode;
+  sitePages?: { id: string; title: string; content: string }[];
 }) {
   const supabase = createClient();
   const router = useRouter();
@@ -98,10 +103,12 @@ export default function DashboardClient({
   const helpContent = homeContent?.help_content || DEFAULT_HELP_TEXT;
 
   const tabs = [
-    { key: "application", label: "My Application", icon: User },
+    { key: "home", label: "Home", icon: HomeIcon },
+    { key: "application", label: "My Account", icon: User },
     { key: "roll", label: "Roll Number", icon: Ticket },
     { key: "results", label: "Results", icon: GraduationCap },
-    { key: "account", label: "Account", icon: KeyRound },
+    ...(sitePages ?? []).map((p) => ({ key: `page-${p.id}`, label: p.title, icon: FileText })),
+    { key: "account", label: "Password", icon: KeyRound },
     { key: "help", label: "Help", icon: LifeBuoy },
     { key: "feedback", label: "Feedback", icon: MessageSquareText },
     ...dashboardTabs.map((t) => ({ key: `custom-${t.id}`, label: t.title, icon: MessageSquareText })),
@@ -196,7 +203,7 @@ export default function DashboardClient({
 
   return (
     <main className="min-h-screen px-4 py-10 md:px-6">
-      <div className="mx-auto max-w-3xl">
+      <div className={clsx("mx-auto", activeTab === "home" ? "max-w-6xl" : "max-w-3xl")}>
         <div className="mb-8 flex items-center justify-between">
           <div className="flex items-center gap-2 font-display text-lg font-semibold text-white">
             {logoUrl ? (
@@ -214,6 +221,31 @@ export default function DashboardClient({
           </button>
         </div>
 
+        {/* Tab bar */}
+        <div className="glass-card mb-6 flex flex-wrap gap-1 p-1.5">
+          {tabs.map((t) => {
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                className={clsx(
+                  "flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition",
+                  activeTab === t.key ? "bg-neon-cyan/10 text-cyan-300" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                )}
+              >
+                <Icon size={15} /> {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Home = the whole public website */}
+        {activeTab === "home" && <div className="-mx-4 md:-mx-6">{siteContent}</div>}
+
+        {/* My Account / Application */}
+        {activeTab === "application" && (
+          <>
         {/* Profile */}
         <div className="glass-card mb-6 flex flex-wrap items-center justify-between gap-4 p-6">
           <div className="flex items-center gap-4">
@@ -264,28 +296,56 @@ export default function DashboardClient({
           />
         )}
 
-        {/* Tab bar */}
-        <div className="glass-card mb-6 flex flex-wrap gap-1 p-1.5">
-          {tabs.map((t) => {
-            const Icon = t.icon;
-            return (
-              <button
-                key={t.key}
-                onClick={() => setActiveTab(t.key)}
-                className={clsx(
-                  "flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition",
-                  activeTab === t.key ? "bg-neon-cyan/10 text-cyan-300" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
-                )}
-              >
-                <Icon size={15} /> {t.label}
-              </button>
-            );
-          })}
-        </div>
 
-        {/* My Application */}
-        {activeTab === "application" && (
-          <>
+        {/* Application status tracker */}
+        {(() => {
+          const st = student.application_status;
+          const hasDocs = documents.length > 0;
+          const steps = [
+            { label: "Application Submitted", done: student.onboarding_step >= 2 || hasDocs || !!enrollment },
+            { label: "Documents Verified", done: st === "verified" || st === "enrolled" || (hasDocs && documents.every((d) => d.status === "verified")) },
+            { label: "Shortlisted", done: !!enrollment?.is_shortlisted || st === "enrolled" },
+            { label: "Enrolled", done: st === "enrolled" },
+          ];
+          const current = steps.findIndex((x) => !x.done);
+          const stopped = st === "rejected" || st === "struck_off";
+          return (
+            <div className="glass-card mb-6 p-6">
+              <h2 className="mb-1 font-display text-lg font-semibold text-white">Application Status</h2>
+              {stopped ? (
+                <div className={clsx("mt-3 flex items-start gap-3 rounded-lg border p-4", st === "rejected" ? "border-red-500/30 bg-red-500/10" : "border-orange-500/30 bg-orange-500/10")}>
+                  {st === "rejected" ? <XCircle className="mt-0.5 text-red-300" size={20} /> : <Ban className="mt-0.5 text-orange-300" size={20} />}
+                  <div>
+                    <p className={clsx("font-semibold", st === "rejected" ? "text-red-300" : "text-orange-300")}>
+                      {st === "rejected" ? "Application Rejected" : "Struck Off"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      {st === "rejected"
+                        ? "Your application was not accepted. Please contact the office if you think this is a mistake."
+                        : "Your name has been struck off the roll. Please contact the office for details."}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <ol className="mt-4 space-y-0">
+                  {steps.map((x, i) => (
+                    <li key={x.label} className="relative flex gap-3 pb-5 last:pb-0">
+                      {i < steps.length - 1 && <span className={clsx("absolute left-[13px] top-7 h-[calc(100%-20px)] w-0.5", x.done ? "bg-emerald-500/60" : "bg-white/10")} />}
+                      <span className={clsx("z-10 grid h-7 w-7 shrink-0 place-items-center rounded-full border text-xs font-bold",
+                        x.done ? "border-emerald-400 bg-emerald-500/20 text-emerald-300" : i === current ? "animate-pulse border-amber-400 bg-amber-500/15 text-amber-300" : "border-white/15 text-slate-500")}>
+                        {x.done ? <CheckCircle2 size={15} /> : i + 1}
+                      </span>
+                      <div>
+                        <p className={clsx("text-sm font-medium", x.done ? "text-slate-100" : i === current ? "text-amber-300" : "text-slate-500")}>{x.label}</p>
+                        {i === current && <p className="text-xs text-slate-500">In progress</p>}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          );
+        })()}
             {enrollment && (
               <div className="glass-card mb-6 grid grid-cols-2 gap-4 p-6 text-sm">
                 <div>
@@ -425,6 +485,17 @@ export default function DashboardClient({
 
         {/* Feedback */}
         {activeTab === "feedback" && <FeedbackTab studentId={student.id} initialFeedback={feedback} />}
+
+        {/* Admin-managed site pages */}
+        {(sitePages ?? []).map(
+          (p) =>
+            activeTab === `page-${p.id}` && (
+              <div key={p.id} className="glass-card p-6">
+                <h2 className="mb-3 font-display text-lg font-semibold text-white">{p.title}</h2>
+                <p className="whitespace-pre-line text-sm leading-relaxed text-slate-300">{p.content}</p>
+              </div>
+            )
+        )}
 
         {/* Admin-added custom tabs */}
         {dashboardTabs.map(

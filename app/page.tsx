@@ -34,7 +34,7 @@ const DEFAULT_CONTENT: HomeContent = {
 export default async function HomePage() {
   const supabase = createClient();
 
-  const [{ data: content }, { data: batches }, { data: gallery }, { data: courses }, { count: rollCount }, { data: cardCount }, { data: reviews }, { data: sitePages }] =
+  const [{ data: content }, { data: batches }, { data: gallery }, { data: courses }, { count: rollCount }, { data: cardCount }, { data: resultCount }, { data: reviews }, { data: sitePages }] =
     await Promise.all([
       supabase.from("home_content").select("*").eq("id", 1).maybeSingle(),
       supabase.from("batches").select("*, batch_courses(course_name)").eq("is_announced", true).order("created_at", { ascending: false }),
@@ -42,6 +42,7 @@ export default async function HomePage() {
       supabase.from("courses").select("*").order("display_order", { ascending: true }),
       supabase.from("roll_numbers").select("*", { count: "exact", head: true }),
       supabase.rpc("id_cards_issued_count"),
+      supabase.rpc("results_published_count"),
       supabase.from("feedback").select("*").eq("is_approved", true).order("created_at", { ascending: false }).limit(9),
       supabase.from("site_pages").select("*").eq("is_active", true).eq("show_in_nav", true).order("display_order", { ascending: true }),
     ]);
@@ -56,12 +57,14 @@ export default async function HomePage() {
   const reviewList = (reviews as Feedback[]) ?? [];
   const showRollSlipLink = (rollCount ?? 0) > 0;
   const showIdCardLink = Number(cardCount ?? 0) > 0;
+  const showResultsLink = Number(resultCount ?? 0) > 0;
 
   return (
     <main>
       <Navbar
         showRollSlipLink={showRollSlipLink}
         showIdCardLink={showIdCardLink}
+        showResultsLink={showResultsLink}
         logoUrl={home.logo_url}
         instituteName={home.institute_name}
         sitePages={(sitePages as SitePage[]) ?? []}

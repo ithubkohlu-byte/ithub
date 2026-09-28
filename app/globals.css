@@ -298,3 +298,9 @@ body {
 .glass-card:hover .hex-icon{transform:rotate(-8deg) scale(1.15)}
 .section-heading{background-size:200% auto}
 @media (prefers-reduced-motion:reduce){.fx-hide{opacity:1;transform:none;filter:none}.fx-page{animation:none}#fx-glow{display:none}}
+
+/* --- Dropdowns: dark background + white text (native lists were white-on-white) --- */
+select,.input-field{color-scheme:dark}
+select option,select optgroup{background-color:#0c1120;color:#f1f5f9}
+select option:checked,select option:hover{background-color:#155e75;color:#fff}
+select:disabled{opacity:.6}

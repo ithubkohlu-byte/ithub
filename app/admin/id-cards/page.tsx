@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { CreditCard, Trash2, Zap } from "lucide-react";
+import { CreditCard, Trash2, Zap, BadgeCheck, Ban } from "lucide-react";
 
 interface EnrolledStudent {
   id: string;
@@ -28,6 +28,9 @@ const EMPTY_FORM = { class_section: "", emergency_contact: "", blood_group: "" }
 export default function AdminIdCardsPage() {
   const supabase = createClient();
   const [enrolled, setEnrolled] = useState<EnrolledStudent[]>([]);
+  const [allStudents, setAllStudents] = useState<{ id: string; full_name: string; tracking_id: string; student_cnic: string; application_status: string; id_card_rejected: boolean }[]>([]);
+  const [q, setQ] = useState("");
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [cards, setCards] = useState<IdCardRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState("");
@@ -40,13 +43,18 @@ export default function AdminIdCardsPage() {
 
   async function load() {
     setLoading(true);
-    const [{ data: students }, { data: cardRows }] = await Promise.all([
+    const [{ data: students }, { data: cardRows }, { data: everyone }] = await Promise.all([
       supabase.from("students").select("id, full_name, tracking_id, student_cnic").eq("application_status", "enrolled"),
       supabase
         .from("id_cards")
         .select("*, students(full_name, tracking_id, student_cnic)")
         .order("created_at", { ascending: false }),
+      supabase
+        .from("students")
+        .select("id, full_name, tracking_id, student_cnic, application_status, id_card_rejected")
+        .order("created_at", { ascending: false }),
     ]);
+    setAllStudents((everyone as any[]) ?? []);
     const issuedIds = new Set((cardRows ?? []).map((c: any) => c.student_id));
     setEnrolled(((students as EnrolledStudent[]) ?? []).filter((s) => !issuedIds.has(s.id)));
     setCards((cardRows as IdCardRow[]) ?? []);
@@ -109,6 +117,32 @@ export default function AdminIdCardsPage() {
       .update({ [field]: value.trim() === "" ? null : value })
       .eq("id", cardId);
     setSavingId(null);
+    load();
+  }
+
+  // Issue a card to ANY student from the list below. The public /id-card page
+  // only serves enrolled students, so issuing also enrolls them if needed.
+  async function issueFromList(st: { id: string; full_name: string; application_status: string }) {
+    setRowBusy(st.id);
+    setMsg(null);
+    if (st.application_status !== "enrolled") {
+      const { error: e0 } = await supabase.from("students").update({ application_status: "enrolled" }).eq("id", st.id);
+      if (e0) { setMsg(`❌ ${e0.message}`); setRowBusy(null); return; }
+    }
+    const error = await issueOne(st.id);
+    await supabase.from("students").update({ id_card_rejected: false }).eq("id", st.id);
+    setRowBusy(null);
+    setMsg(error ? `❌ ${error.message}` : `✅ Card issued to ${st.full_name}.`);
+    load();
+  }
+
+  async function rejectFromList(st: { id: string; full_name: string }) {
+    if (!confirm(`Reject the ID card for ${st.full_name}? Any issued card will be removed.`)) return;
+    setRowBusy(st.id);
+    await supabase.from("id_cards").delete().eq("student_id", st.id);
+    await supabase.from("students").update({ id_card_rejected: true }).eq("id", st.id);
+    setRowBusy(null);
+    setMsg(`Card rejected for ${st.full_name}.`);
     load();
   }
 
@@ -202,6 +236,72 @@ export default function AdminIdCardsPage() {
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ALL STUDENTS — issue or reject a card for anyone */}
+      <div className="glass-card mt-6 p-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4">
+          <h2 className="font-semibold text-white">All Students ({allStudents.length})</h2>
+          <input className="input-field max-w-xs" placeholder="Search name, CNIC, tracking ID" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        {msg && <p className="px-4 pt-3 text-sm text-cyan-300">{msg}</p>}
+        <div className="overflow-x-auto scroll-thin">
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead className="border-b border-white/10 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Student</th>
+                <th className="px-4 py-3">CNIC</th>
+                <th className="px-4 py-3">Tracking ID</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Card</th>
+                <th className="px-4 py-3">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allStudents
+                .filter((s) => !q || [s.full_name, s.student_cnic, s.tracking_id].some((f) => f?.toLowerCase().includes(q.toLowerCase())))
+                .map((s) => {
+                  const issued = cards.some((c) => c.student_id === s.id);
+                  return (
+                    <tr key={s.id} className="border-b border-white/5">
+                      <td className="px-4 py-3 font-medium text-white">{s.full_name}</td>
+                      <td className="px-4 py-3 text-slate-400">{s.student_cnic}</td>
+                      <td className="px-4 py-3 text-cyan-300">{s.tracking_id}</td>
+                      <td className="px-4 py-3 capitalize text-slate-300">{s.application_status.replace("_", " ")}</td>
+                      <td className="px-4 py-3">
+                        {issued ? (
+                          <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-semibold text-emerald-300">Issued</span>
+                        ) : s.id_card_rejected ? (
+                          <span className="rounded-full bg-red-500/15 px-2.5 py-0.5 text-xs font-semibold text-red-300">Rejected</span>
+                        ) : (
+                          <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-slate-400">Not issued</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-1.5">
+                          {!issued && (
+                            <button onClick={() => issueFromList(s)} disabled={rowBusy === s.id}
+                              className="flex items-center gap-1 rounded-md bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/25">
+                              <BadgeCheck size={13} /> Issue Card
+                            </button>
+                          )}
+                          {(issued || !s.id_card_rejected) && (
+                            <button onClick={() => rejectFromList(s)} disabled={rowBusy === s.id}
+                              className="flex items-center gap-1 rounded-md bg-red-500/15 px-2.5 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/25">
+                              <Ban size={13} /> Reject Card
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              {!loading && allStudents.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No students yet.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

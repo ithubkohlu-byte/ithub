@@ -156,7 +156,9 @@ export default function AdminStudentDetailPage() {
         </div>
         <div className="flex gap-2">
           <button onClick={() => setAppStatus("verified")} className="btn-outline !py-2 text-xs">Approve</button>
+          <button onClick={() => setAppStatus("enrolled")} className="btn-outline !py-2 text-xs !border-emerald-500/40 !text-emerald-300">Enroll</button>
           <button onClick={() => setAppStatus("rejected")} className="btn-outline !py-2 text-xs !border-red-500/40 !text-red-300">Reject</button>
+          <button onClick={() => setAppStatus("struck_off")} className="btn-outline !py-2 text-xs !border-orange-500/40 !text-orange-300">Struck Off</button>
           <button onClick={() => setShowReset(true)} className="btn-outline !py-2 text-xs"><Key size={14} /> Reset Password</button>
         </div>
       </div>
