@@ -114,17 +114,24 @@ export default function Footer({ content }: { content: HomeContent }) {
             </div>
           </div>
 
+          {/* Developer credit — large and fully visible */}
+          {content.developer_name && (
+            <div className="mt-12 border-t pt-10 text-center" style={{ borderColor: "rgba(34,211,238,0.12)" }}>
+              <p className="text-xs uppercase tracking-[0.3em] text-cyan-400/70" style={{ fontFamily: "var(--font-mono)" }}>
+                Developed by
+              </p>
+              <p className="neon-text mt-2 font-display text-3xl font-bold text-white md:text-5xl">
+                {content.developer_name}
+              </p>
+            </div>
+          )}
+
           {/* Bottom bar */}
-          <div className="mt-10 flex flex-col items-center justify-between gap-2 border-t pt-6 text-[10px] text-slate-600 md:flex-row" style={{ borderColor: "rgba(255,255,255,0.04)", fontFamily: "var(--font-mono)" }}>
+          <div className="mt-8 flex flex-col items-center justify-between gap-2 border-t pt-6 text-xs text-slate-400 md:flex-row" style={{ borderColor: "rgba(255,255,255,0.06)", fontFamily: "var(--font-mono)" }}>
             <span>
               © {year} {content.institute_name || "IT HUB KOHLU"}. All rights reserved.
             </span>
-            <span className="flex items-center gap-1">
-              <span className="text-cyan-400/30">//</span>
-              {content.developer_name ? (
-                <>Developed by <span className="text-cyan-400/60 ml-1">{content.developer_name}</span></>
-              ) : "Powered by IT HUB KOHLU"}
-            </span>
+            {!content.developer_name && <span>Powered by {content.institute_name || "IT HUB KOHLU"}</span>}
           </div>
         </div>
       </footer>

@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import Papa from "papaparse";
-import { UploadCloud, Download, Eye, EyeOff, Trash2 } from "lucide-react";
+import { UploadCloud, Download, Eye, EyeOff, Trash2, FileSpreadsheet } from "lucide-react";
+import StudentPicker, { useStudents, findStudentByRef } from "@/components/admin/StudentPicker";
+import { cnicDigits } from "@/lib/cnic";
 
 interface ResultRow {
   tracking_id: string;
@@ -27,11 +29,13 @@ export default function AdminResultsPage() {
   const [bulkLog, setBulkLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
+  const [enrolledOnly, setEnrolledOnly] = useState(true);
+  const { students, loading: studentsLoading } = useStudents(enrolledOnly);
 
   async function load() {
     const { data } = await supabase
       .from("results")
-      .select("*, students(full_name, tracking_id)")
+      .select("*, students(full_name, tracking_id, student_cnic)")
       .order("created_at", { ascending: false });
     setList(data ?? []);
   }
@@ -48,17 +52,11 @@ export default function AdminResultsPage() {
   async function assignOne(row: ResultRow, file?: File | null): Promise<string> {
     const ref = (row.tracking_id || row.cnic || "").trim();
     if (!ref) return "❌ row skipped: tracking_id or cnic is required";
-    // Match by Tracking ID first, then by CNIC (with or without dashes).
-    let { data: student } = await supabase.from("students").select("id").ilike("tracking_id", ref).maybeSingle();
+    // Match by Tracking ID or CNIC (any format: with or without dashes/spaces).
+    const student = findStudentByRef(students, row.tracking_id || "") ?? findStudentByRef(students, row.cnic || "") ?? findStudentByRef(students, ref);
     if (!student) {
-      const digits = ref.replace(/\D/g, "");
-      if (digits.length === 13) {
-        const dashed = `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12)}`;
-        const r = await supabase.from("students").select("id").or(`student_cnic.eq.${digits},student_cnic.eq.${dashed}`).maybeSingle();
-        student = r.data;
-      }
+      return `❌ ${ref}: student not found${enrolledOnly ? " among enrolled students (untick 'Enrolled students only' to include everyone)" : ""}`;
     }
-    if (!student) return `❌ ${ref}: student not found`;
 
     const { data: enrollment } = await supabase.from("enrollments").select("id").eq("student_id", student.id).maybeSingle();
 
@@ -85,7 +83,7 @@ export default function AdminResultsPage() {
   }
 
   async function handleManualAssign() {
-    if ((!manual.tracking_id && !manual.cnic) || !manual.title) return setMsg("Tracking ID (or CNIC) and title are required.");
+    if ((!manual.tracking_id && !manual.cnic) || !manual.title) return setMsg("Select a student and enter a title.");
     setBusy(true);
     setMsg(null);
     const result = await assignOne(manual, manualFile);
@@ -105,15 +103,44 @@ export default function AdminResultsPage() {
       complete: async (results) => {
         setBusy(true);
         const logs: string[] = [];
+        let skipped = 0;
         for (const row of results.data) {
           if (!row.tracking_id && !row.cnic) continue;
+          if (!row.title || !row.title.trim()) {
+            skipped++;
+            continue;
+          }
           logs.push(await assignOne(row));
         }
+        if (skipped > 0) logs.push(`ℹ️ ${skipped} row(s) skipped because the title column was empty`);
         setBulkLog(logs);
         setBusy(false);
         load();
       },
     });
+  }
+
+  // Downloads a CSV that already contains every listed student's Tracking ID and CNIC,
+  // so admin only has to fill title / status / marks and upload it back.
+  function downloadTemplate() {
+    const rows = students.map((s) => ({
+      tracking_id: s.tracking_id,
+      cnic: s.student_cnic ?? "",
+      student_name: s.full_name,
+      title: "",
+      result_status: "pending",
+      marks_obtained: "",
+      marks_total: "",
+      remarks: "",
+    }));
+    const csv = Papa.unparse(rows);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "results-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function togglePublish(r: any) {
@@ -141,8 +168,14 @@ export default function AdminResultsPage() {
           <h2 className="mb-4 font-semibold text-white">Upload One Result</h2>
           {msg && <p className="mb-3 text-sm text-cyan-300">{msg}</p>}
           <div className="space-y-3">
-            <input className="input-field" placeholder="Tracking ID or CNIC" value={manual.tracking_id}
-              onChange={(e) => setManual({ ...manual, tracking_id: e.target.value })} />
+            <StudentPicker
+              students={students}
+              loading={studentsLoading}
+              enrolledOnly={enrolledOnly}
+              onToggleEnrolledOnly={setEnrolledOnly}
+              selectedTrackingId={manual.tracking_id}
+              onSelect={(s) => setManual({ ...manual, tracking_id: s?.tracking_id ?? "" })}
+            />
             <input className="input-field" placeholder="Title (e.g. Entry Test Result)" value={manual.title}
               onChange={(e) => setManual({ ...manual, title: e.target.value })} />
             <select className="input-field" value={manual.result_status}
@@ -172,10 +205,14 @@ export default function AdminResultsPage() {
         <div className="glass-card p-6">
           <h2 className="mb-4 font-semibold text-white">Bulk Upload (CSV)</h2>
           <p className="mb-3 text-xs text-slate-400">
-            Columns: <code className="text-cyan-300">tracking_id (or cnic), title, result_status, marks_obtained, marks_total, remarks</code>
+            Download the CSV above — every student's Tracking ID and CNIC are already filled in. Just fill <code className="text-cyan-300">title, result_status, marks_obtained, marks_total, remarks</code> and upload it back (rows with an empty title are skipped). CNIC works with or without dashes.
             <br />
             (result_status: pending / pass / fail / merit / waitlist — files can&apos;t be attached via CSV, upload those one at a time)
           </p>
+          <button type="button" onClick={downloadTemplate} disabled={studentsLoading || students.length === 0}
+            className="btn-outline mb-3 flex w-full justify-center !py-3">
+            <FileSpreadsheet size={16} /> Download CSV with all {enrolledOnly ? "enrolled " : ""}students ({students.length})
+          </button>
           <label className="btn-outline flex w-full cursor-pointer justify-center !py-3">
             <UploadCloud size={16} /> Choose CSV File
             <input type="file" accept=".csv" className="hidden" onChange={(e) => e.target.files && handleCsvUpload(e.target.files[0])} />
@@ -188,7 +225,7 @@ export default function AdminResultsPage() {
         </div>
       </div>
 
-      <input className="input-field mt-6" placeholder="Search results by student name, tracking ID or title" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input className="input-field mt-6" placeholder="Search results by student name, Tracking ID, CNIC or title" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="glass-card mt-3 overflow-x-auto scroll-thin p-0">
         <table className="w-full min-w-[900px] text-left text-sm">
           <thead className="border-b border-white/10 text-xs uppercase text-slate-500">
@@ -204,7 +241,15 @@ export default function AdminResultsPage() {
             </tr>
           </thead>
           <tbody>
-            {list.filter((r) => !q || [r.students?.full_name, r.students?.tracking_id, r.title].some((f: string) => f?.toLowerCase().includes(q.toLowerCase()))).map((r) => (
+            {list.filter((r) => {
+              if (!q) return true;
+              const t = q.toLowerCase();
+              const d = cnicDigits(q);
+              return (
+                [r.students?.full_name, r.students?.tracking_id, r.title].some((f: string) => f?.toLowerCase().includes(t)) ||
+                (d.length > 0 && cnicDigits(r.students?.student_cnic).includes(d))
+              );
+            }).map((r) => (
               <tr key={r.id} className="border-b border-white/5">
                 <td className="px-4 py-3 text-slate-200">{r.students?.full_name}</td>
                 <td className="px-4 py-3 text-slate-400">{r.students?.tracking_id}</td>

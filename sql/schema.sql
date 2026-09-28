@@ -103,6 +103,7 @@ end;
 $$ language plpgsql;
 
 drop trigger if exists trg_batch_seat_guard on public.batches;
+drop trigger if exists trg_batch_seat_guard on public.batches;
 create trigger trg_batch_seat_guard
 before insert or update of seats_filled on public.batches
 for each row execute function public.batch_seat_guard();
@@ -132,6 +133,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists trg_sync_batch_primary_course on public.batches;
 drop trigger if exists trg_sync_batch_primary_course on public.batches;
 create trigger trg_sync_batch_primary_course
 after insert or update of course_name on public.batches
@@ -199,6 +201,7 @@ end;
 $$ language plpgsql;
 
 drop trigger if exists trg_set_tracking_id on public.students;
+drop trigger if exists trg_set_tracking_id on public.students;
 create trigger trg_set_tracking_id
 before insert on public.students
 for each row execute function public.set_tracking_id();
@@ -225,6 +228,7 @@ end;
 $$ language plpgsql;
 
 drop trigger if exists trg_increment_seats on public.enrollments;
+drop trigger if exists trg_increment_seats on public.enrollments;
 create trigger trg_increment_seats
 after insert on public.enrollments
 for each row execute function public.increment_batch_seats();
@@ -240,6 +244,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists trg_decrement_seats on public.enrollments;
 drop trigger if exists trg_decrement_seats on public.enrollments;
 create trigger trg_decrement_seats
 after delete on public.enrollments
@@ -325,6 +330,7 @@ end;
 $$ language plpgsql security definer set search_path = public;
 
 drop trigger if exists trg_set_feedback_student_name on public.feedback;
+drop trigger if exists trg_set_feedback_student_name on public.feedback;
 create trigger trg_set_feedback_student_name
 before insert on public.feedback
 for each row execute function public.set_feedback_student_name();
@@ -368,85 +374,116 @@ returns boolean as $$
 $$ language sql stable security definer;
 
 -- admins: only admins can read the admins table
+drop policy if exists "admins read own row" on public.admins;
 create policy "admins read own row" on public.admins for select using (id = auth.uid());
 
 -- home_content: public read, admin write
+drop policy if exists "home_content public read" on public.home_content;
 create policy "home_content public read" on public.home_content for select using (true);
+drop policy if exists "home_content admin write" on public.home_content;
 create policy "home_content admin write" on public.home_content for all
   using (public.is_admin()) with check (public.is_admin());
 
 -- batches: public read only announced; admin full access
+drop policy if exists "batches public read announced" on public.batches;
 create policy "batches public read announced" on public.batches
   for select using (is_announced = true or public.is_admin());
+drop policy if exists "batches admin write" on public.batches;
 create policy "batches admin write" on public.batches for all
   using (public.is_admin()) with check (public.is_admin());
 
 -- students: a student can read/update only their own row; admin full access
+drop policy if exists "students self read" on public.students;
 create policy "students self read" on public.students
   for select using (id = auth.uid() or public.is_admin());
+drop policy if exists "students self insert" on public.students;
 create policy "students self insert" on public.students
   for insert with check (id = auth.uid());
+drop policy if exists "students self update" on public.students;
 create policy "students self update" on public.students
   for update using (id = auth.uid() or public.is_admin());
+drop policy if exists "students admin delete" on public.students;
 create policy "students admin delete" on public.students
   for delete using (public.is_admin());
 
 -- enrollments: student sees own; admin sees all
+drop policy if exists "enrollments self read" on public.enrollments;
 create policy "enrollments self read" on public.enrollments
   for select using (student_id = auth.uid() or public.is_admin());
+drop policy if exists "enrollments self insert" on public.enrollments;
 create policy "enrollments self insert" on public.enrollments
   for insert with check (student_id = auth.uid() or public.is_admin());
+drop policy if exists "enrollments admin write" on public.enrollments;
 create policy "enrollments admin write" on public.enrollments
   for update using (public.is_admin());
+drop policy if exists "enrollments admin delete" on public.enrollments;
 create policy "enrollments admin delete" on public.enrollments
   for delete using (public.is_admin());
 
 -- documents: student sees/inserts own; only admin updates status
+drop policy if exists "documents self read" on public.documents;
 create policy "documents self read" on public.documents
   for select using (student_id = auth.uid() or public.is_admin());
+drop policy if exists "documents self insert" on public.documents;
 create policy "documents self insert" on public.documents
   for insert with check (student_id = auth.uid() or public.is_admin());
+drop policy if exists "documents admin update" on public.documents;
 create policy "documents admin update" on public.documents
   for update using (public.is_admin());
 
 -- courses: public read; admin write (add/rename/reorder/open-close a course)
+drop policy if exists "courses public read" on public.courses;
 create policy "courses public read" on public.courses for select using (true);
+drop policy if exists "courses admin write" on public.courses;
 create policy "courses admin write" on public.courses for all
   using (public.is_admin()) with check (public.is_admin());
 
 -- gallery: public read (not hidden); admin full access
+drop policy if exists "gallery public read" on public.gallery;
 create policy "gallery public read" on public.gallery
   for select using (is_hidden = false or public.is_admin());
+drop policy if exists "gallery admin write" on public.gallery;
 create policy "gallery admin write" on public.gallery for all
   using (public.is_admin()) with check (public.is_admin());
 
 -- roll_numbers: public can look up (needed for /roll-slip search); admin writes
+drop policy if exists "roll_numbers public read" on public.roll_numbers;
 create policy "roll_numbers public read" on public.roll_numbers for select using (true);
+drop policy if exists "roll_numbers admin write" on public.roll_numbers;
 create policy "roll_numbers admin write" on public.roll_numbers for all
   using (public.is_admin()) with check (public.is_admin());
 
 -- dashboard_tabs: logged-in students see active tabs; admin has full access
+drop policy if exists "dashboard_tabs student read" on public.dashboard_tabs;
 create policy "dashboard_tabs student read" on public.dashboard_tabs
   for select using ((is_active = true and auth.role() = 'authenticated') or public.is_admin());
+drop policy if exists "dashboard_tabs admin write" on public.dashboard_tabs;
 create policy "dashboard_tabs admin write" on public.dashboard_tabs for all
   using (public.is_admin()) with check (public.is_admin());
 
 -- feedback: a student can submit and read their own; admin reads/manages all;
 -- anyone (including anonymous visitors) can read admin-approved reviews.
+drop policy if exists "feedback self read" on public.feedback;
 create policy "feedback self read" on public.feedback
   for select using (student_id = auth.uid() or public.is_admin());
+drop policy if exists "feedback public read approved" on public.feedback;
 create policy "feedback public read approved" on public.feedback
   for select using (is_approved = true);
+drop policy if exists "feedback self insert" on public.feedback;
 create policy "feedback self insert" on public.feedback
   for insert with check (student_id = auth.uid());
+drop policy if exists "feedback admin update" on public.feedback;
 create policy "feedback admin update" on public.feedback
   for update using (public.is_admin());
+drop policy if exists "feedback admin delete" on public.feedback;
 create policy "feedback admin delete" on public.feedback
   for delete using (public.is_admin());
 
 -- batch_courses: public read (needed on the homepage/apply form); admin write
+drop policy if exists "batch_courses public read" on public.batch_courses;
 create policy "batch_courses public read" on public.batch_courses
   for select using (true);
+drop policy if exists "batch_courses admin write" on public.batch_courses;
 create policy "batch_courses admin write" on public.batch_courses for all
   using (public.is_admin()) with check (public.is_admin());
 
@@ -490,6 +527,7 @@ grant execute on function public.verify_record(text) to anon, authenticated;
 -- STORAGE POLICIES
 -- =========================================================
 -- student_docs: private. Student can upload/read own folder (path prefix = their uid). Admin reads all.
+drop policy if exists "student_docs student rw" on storage.objects;
 create policy "student_docs student rw" on storage.objects
   for all using (
     bucket_id = 'student_docs' and (
@@ -502,20 +540,27 @@ create policy "student_docs student rw" on storage.objects
   );
 
 -- gallery_images: public read, admin write
+drop policy if exists "gallery_images public read" on storage.objects;
 create policy "gallery_images public read" on storage.objects
   for select using (bucket_id = 'gallery_images');
+drop policy if exists "gallery_images admin write" on storage.objects;
 create policy "gallery_images admin write" on storage.objects
   for insert with check (bucket_id = 'gallery_images' and public.is_admin());
+drop policy if exists "gallery_images admin delete" on storage.objects;
 create policy "gallery_images admin delete" on storage.objects
   for delete using (bucket_id = 'gallery_images' and public.is_admin());
 
 -- site_assets (logo, etc.): public read, admin write
+drop policy if exists "site_assets public read" on storage.objects;
 create policy "site_assets public read" on storage.objects
   for select using (bucket_id = 'site_assets');
+drop policy if exists "site_assets admin write" on storage.objects;
 create policy "site_assets admin write" on storage.objects
   for insert with check (bucket_id = 'site_assets' and public.is_admin());
+drop policy if exists "site_assets admin update" on storage.objects;
 create policy "site_assets admin update" on storage.objects
   for update using (bucket_id = 'site_assets' and public.is_admin());
+drop policy if exists "site_assets admin delete" on storage.objects;
 create policy "site_assets admin delete" on storage.objects
   for delete using (bucket_id = 'site_assets' and public.is_admin());
 
@@ -536,9 +581,9 @@ alter table public.home_content
 -- batches/enrollments, then reuse the old course_descriptions JSON as each
 -- course's description (safe no-op if this is a fresh install).
 insert into public.courses (name, description, display_order)
-  select distinct b.course_name, coalesce(hc.course_descriptions ->> b.course_name, ''), 99
+  select distinct b.course_name, '', 99
   from public.batches b
-  left join public.home_content hc on hc.id = 1
+  where b.course_name is not null
   on conflict (name) do nothing;
 
 -- Point batches.course_name at the new courses table so renaming a course
@@ -587,8 +632,10 @@ create table if not exists public.dashboard_tabs (
 );
 alter table public.dashboard_tabs enable row level security;
 drop policy if exists "dashboard_tabs student read" on public.dashboard_tabs;
+drop policy if exists "dashboard_tabs student read" on public.dashboard_tabs;
 create policy "dashboard_tabs student read" on public.dashboard_tabs
   for select using ((is_active = true and auth.role() = 'authenticated') or public.is_admin());
+drop policy if exists "dashboard_tabs admin write" on public.dashboard_tabs;
 drop policy if exists "dashboard_tabs admin write" on public.dashboard_tabs;
 create policy "dashboard_tabs admin write" on public.dashboard_tabs for all
   using (public.is_admin()) with check (public.is_admin());
@@ -602,11 +649,14 @@ create table if not exists public.feedback (
 );
 alter table public.feedback enable row level security;
 drop policy if exists "feedback self read" on public.feedback;
+drop policy if exists "feedback self read" on public.feedback;
 create policy "feedback self read" on public.feedback
   for select using (student_id = auth.uid() or public.is_admin());
 drop policy if exists "feedback self insert" on public.feedback;
+drop policy if exists "feedback self insert" on public.feedback;
 create policy "feedback self insert" on public.feedback
   for insert with check (student_id = auth.uid());
+drop policy if exists "feedback admin delete" on public.feedback;
 drop policy if exists "feedback admin delete" on public.feedback;
 create policy "feedback admin delete" on public.feedback
   for delete using (public.is_admin());
@@ -634,6 +684,7 @@ end;
 $$ language plpgsql;
 
 drop trigger if exists trg_sync_batch_primary_course on public.batches;
+drop trigger if exists trg_sync_batch_primary_course on public.batches;
 create trigger trg_sync_batch_primary_course
 after insert or update of course_name on public.batches
 for each row execute function public.sync_batch_primary_course();
@@ -644,8 +695,10 @@ insert into public.batch_courses (batch_id, course_name)
 on conflict (batch_id, course_name) do nothing;
 
 drop policy if exists "batch_courses public read" on public.batch_courses;
+drop policy if exists "batch_courses public read" on public.batch_courses;
 create policy "batch_courses public read" on public.batch_courses
   for select using (true);
+drop policy if exists "batch_courses admin write" on public.batch_courses;
 drop policy if exists "batch_courses admin write" on public.batch_courses;
 create policy "batch_courses admin write" on public.batch_courses for all
   using (public.is_admin()) with check (public.is_admin());
@@ -668,13 +721,16 @@ end;
 $$ language plpgsql security definer set search_path = public;
 
 drop trigger if exists trg_set_feedback_student_name on public.feedback;
+drop trigger if exists trg_set_feedback_student_name on public.feedback;
 create trigger trg_set_feedback_student_name
 before insert on public.feedback
 for each row execute function public.set_feedback_student_name();
 
 drop policy if exists "feedback public read approved" on public.feedback;
+drop policy if exists "feedback public read approved" on public.feedback;
 create policy "feedback public read approved" on public.feedback
   for select using (is_approved = true);
+drop policy if exists "feedback admin update" on public.feedback;
 drop policy if exists "feedback admin update" on public.feedback;
 create policy "feedback admin update" on public.feedback
   for update using (public.is_admin());
@@ -790,6 +846,7 @@ end;
 $$ language plpgsql;
 
 drop trigger if exists trg_adjust_seats_on_update on public.enrollments;
+drop trigger if exists trg_adjust_seats_on_update on public.enrollments;
 create trigger trg_adjust_seats_on_update
 after update of batch_id on public.enrollments
 for each row execute function public.adjust_batch_seats_on_enrollment_update();
@@ -820,8 +877,11 @@ create table if not exists public.results (
 );
 alter table public.results enable row level security;
 
+drop policy if exists "results self read published" on public.results;
+
 create policy "results self read published" on public.results
   for select using ((student_id = auth.uid() and is_published = true) or public.is_admin());
+drop policy if exists "results admin write" on public.results;
 create policy "results admin write" on public.results for all
   using (public.is_admin()) with check (public.is_admin());
 
@@ -829,16 +889,21 @@ insert into storage.buckets (id, name, public)
 values ('result_files', 'result_files', false)
 on conflict (id) do nothing;
 
+drop policy if exists "result_files student read own" on storage.objects;
+
 create policy "result_files student read own" on storage.objects
   for select using (
     bucket_id = 'result_files' and (
       (auth.uid())::text = (storage.foldername(name))[1] or public.is_admin()
     )
   );
+drop policy if exists "result_files admin write" on storage.objects;
 create policy "result_files admin write" on storage.objects
   for insert with check (bucket_id = 'result_files' and public.is_admin());
+drop policy if exists "result_files admin update" on storage.objects;
 create policy "result_files admin update" on storage.objects
   for update using (bucket_id = 'result_files' and public.is_admin());
+drop policy if exists "result_files admin delete" on storage.objects;
 create policy "result_files admin delete" on storage.objects
   for delete using (bucket_id = 'result_files' and public.is_admin());
 
@@ -871,8 +936,11 @@ create table if not exists public.site_pages (
 );
 alter table public.site_pages enable row level security;
 
+drop policy if exists "site_pages public read active" on public.site_pages;
+
 create policy "site_pages public read active" on public.site_pages
   for select using (is_active = true or public.is_admin());
+drop policy if exists "site_pages admin write" on public.site_pages;
 create policy "site_pages admin write" on public.site_pages for all
   using (public.is_admin()) with check (public.is_admin());
 
@@ -912,6 +980,7 @@ update public.admins a set email = u.email
 -- the client, so this relaxed read policy does not let an admin add or
 -- remove other admins on their own.
 drop policy if exists "admins read own row" on public.admins;
+drop policy if exists "admins read all if admin" on public.admins;
 create policy "admins read all if admin" on public.admins
   for select using (public.is_admin());
 
@@ -1006,12 +1075,17 @@ create table if not exists public.additional_qualifications (
 
 alter table public.additional_qualifications enable row level security;
 
+drop policy if exists "additional_qualifications self read" on public.additional_qualifications;
+
 create policy "additional_qualifications self read" on public.additional_qualifications
   for select using (student_id = auth.uid() or public.is_admin());
+drop policy if exists "additional_qualifications self insert" on public.additional_qualifications;
 create policy "additional_qualifications self insert" on public.additional_qualifications
   for insert with check (student_id = auth.uid());
+drop policy if exists "additional_qualifications self update" on public.additional_qualifications;
 create policy "additional_qualifications self update" on public.additional_qualifications
   for update using (student_id = auth.uid() or public.is_admin());
+drop policy if exists "additional_qualifications self delete" on public.additional_qualifications;
 create policy "additional_qualifications self delete" on public.additional_qualifications
   for delete using (student_id = auth.uid());
 
@@ -1065,6 +1139,7 @@ end;
 $$ language plpgsql;
 
 drop trigger if exists trg_set_card_no on public.id_cards;
+drop trigger if exists trg_set_card_no on public.id_cards;
 create trigger trg_set_card_no
 before insert on public.id_cards
 for each row execute function public.set_card_no();
@@ -1077,8 +1152,10 @@ alter table public.id_cards enable row level security;
 -- it goes through the lookup_id_card() security-definer RPC below instead,
 -- same pattern as verify_record() for admission letters, so RLS on
 -- public.students never has to be widened for anonymous search.
+drop policy if exists "id_cards admin all" on public.id_cards;
 create policy "id_cards admin all" on public.id_cards for all
   using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "id_cards self read" on public.id_cards;
 create policy "id_cards self read" on public.id_cards
   for select using (student_id = auth.uid());
 
@@ -1156,6 +1233,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists trg_set_id_card_valid_until on public.id_cards;
 drop trigger if exists trg_set_id_card_valid_until on public.id_cards;
 create trigger trg_set_id_card_valid_until
 before insert on public.id_cards

@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import Papa from "papaparse";
-import { UploadCloud } from "lucide-react";
+import { UploadCloud, FileSpreadsheet } from "lucide-react";
+import StudentPicker, { useStudents, findStudentByRef } from "@/components/admin/StudentPicker";
 import { TEST_TYPE_PRESETS } from "@/types";
 
 interface RollRow {
   roll_no: string;
   tracking_id: string;
+  cnic?: string;
   test_type: string;
   exam_center: string;
   exam_date: string;
@@ -59,11 +61,13 @@ export default function AdminRollNumbersPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [list, setList] = useState<any[]>([]);
   const [bulkLog, setBulkLog] = useState<string[]>([]);
+  const [enrolledOnly, setEnrolledOnly] = useState(true);
+  const { students, loading: studentsLoading } = useStudents(enrolledOnly);
 
   async function load() {
     const { data } = await supabase
       .from("roll_numbers")
-      .select("*, students(full_name, tracking_id)")
+      .select("*, students(full_name, tracking_id, student_cnic)")
       .order("created_at", { ascending: false });
     setList(data ?? []);
   }
@@ -71,12 +75,12 @@ export default function AdminRollNumbersPage() {
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function assignOne(row: RollRow): Promise<string> {
-    const { data: student, error: sErr } = await supabase
-      .from("students")
-      .select("id")
-      .eq("tracking_id", row.tracking_id)
-      .maybeSingle();
-    if (sErr || !student) return `❌ ${row.tracking_id}: student not found`;
+    // Match by Tracking ID or CNIC (any format: with or without dashes/spaces).
+    const ref = (row.tracking_id || row.cnic || "").trim();
+    const student = findStudentByRef(students, row.tracking_id || "") ?? findStudentByRef(students, row.cnic || "");
+    if (!student) {
+      return `❌ ${ref || "(empty)"}: student not found${enrolledOnly ? " among enrolled students (untick 'Enrolled students only' to include everyone)" : ""}`;
+    }
 
     const { data: enrollment } = await supabase.from("enrollments").select("id").eq("student_id", student.id).maybeSingle();
 
@@ -94,11 +98,13 @@ export default function AdminRollNumbersPage() {
       },
       { onConflict: "roll_no" }
     );
-    return error ? `❌ ${row.tracking_id}: ${error.message}` : `✅ ${row.tracking_id} → Roll ${row.roll_no}`;
+    return error ? `❌ ${student.tracking_id}: ${error.message}` : `✅ ${student.full_name} (${student.tracking_id}) → Roll ${row.roll_no}`;
   }
 
   async function handleManualAssign() {
     setMsg(null);
+    if (!manual.tracking_id) return setMsg("Select a student first.");
+    if (!manual.roll_no.trim()) return setMsg("Roll No. is required.");
     const result = await assignOne(manual);
     setMsg(result);
     if (result.startsWith("✅")) {
@@ -116,6 +122,31 @@ export default function AdminRollNumbersPage() {
     load();
   }
 
+  // CSV with every listed student's Tracking ID and CNIC already filled in;
+  // admin only fills roll_no and the exam details, then uploads it back.
+  function downloadTemplate() {
+    const rows = students.map((s) => ({
+      roll_no: "",
+      tracking_id: s.tracking_id,
+      cnic: s.student_cnic ?? "",
+      student_name: s.full_name,
+      test_type: TEST_TYPE_PRESETS[0],
+      exam_center: "",
+      exam_date: "",
+      exam_time: "",
+      reporting_time: "",
+      note: "",
+    }));
+    const csv = Papa.unparse(rows);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "roll-numbers-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function handleCsvUpload(file: File) {
     Papa.parse<RollRow>(file, {
       header: true,
@@ -123,7 +154,7 @@ export default function AdminRollNumbersPage() {
       complete: async (results) => {
         const logs: string[] = [];
         for (const row of results.data) {
-          if (!row.roll_no || !row.tracking_id) continue;
+          if (!row.roll_no || !row.roll_no.trim() || (!row.tracking_id && !row.cnic)) continue;
           logs.push(await assignOne(row));
         }
         setBulkLog(logs);
@@ -142,8 +173,14 @@ export default function AdminRollNumbersPage() {
           <h2 className="mb-4 font-semibold text-white">Manual Assign</h2>
           {msg && <p className="mb-3 text-sm text-cyan-300">{msg}</p>}
           <div className="space-y-3">
-            <input className="input-field" placeholder="Tracking ID (e.g. ITHUB-2026-1001)" value={manual.tracking_id}
-              onChange={(e) => setManual({ ...manual, tracking_id: e.target.value })} />
+            <StudentPicker
+              students={students}
+              loading={studentsLoading}
+              enrolledOnly={enrolledOnly}
+              onToggleEnrolledOnly={setEnrolledOnly}
+              selectedTrackingId={manual.tracking_id}
+              onSelect={(s) => setManual({ ...manual, tracking_id: s?.tracking_id ?? "" })}
+            />
             <input className="input-field" placeholder="Roll No." value={manual.roll_no}
               onChange={(e) => setManual({ ...manual, roll_no: e.target.value })} />
             <div>
@@ -170,9 +207,15 @@ export default function AdminRollNumbersPage() {
         <div className="glass-card p-6">
           <h2 className="mb-4 font-semibold text-white">Bulk Upload (CSV)</h2>
           <p className="mb-3 text-xs text-slate-400">
-            Columns: <code className="text-cyan-300">roll_no, tracking_id, test_type, exam_center, exam_date, exam_time, reporting_time, note</code>{" "}
-            (<code className="text-cyan-300">test_type, reporting_time, note</code> are optional — test_type defaults to &quot;Entry Test&quot;)
+            Download the CSV below — every student&apos;s Tracking ID and CNIC are already filled in. Fill{" "}
+            <code className="text-cyan-300">roll_no, exam_center, exam_date, exam_time</code> (and optionally{" "}
+            <code className="text-cyan-300">test_type, reporting_time, note</code>) and upload it back. Rows with an empty roll_no are skipped.
+            Students are matched by <code className="text-cyan-300">tracking_id</code> or <code className="text-cyan-300">cnic</code> (dashes optional).
           </p>
+          <button type="button" onClick={downloadTemplate} disabled={studentsLoading || students.length === 0}
+            className="btn-outline mb-3 flex w-full justify-center !py-3">
+            <FileSpreadsheet size={16} /> Download CSV with all {enrolledOnly ? "enrolled " : ""}students ({students.length})
+          </button>
           <label className="btn-outline flex w-full cursor-pointer justify-center !py-3">
             <UploadCloud size={16} /> Choose CSV File
             <input type="file" accept=".csv" className="hidden" onChange={(e) => e.target.files && handleCsvUpload(e.target.files[0])} />
@@ -186,12 +229,13 @@ export default function AdminRollNumbersPage() {
       </div>
 
       <div className="glass-card mt-6 overflow-x-auto scroll-thin p-0">
-        <table className="w-full min-w-[1080px] text-left text-sm">
+        <table className="w-full min-w-[1180px] text-left text-sm">
           <thead className="border-b border-white/10 text-xs uppercase text-slate-500">
             <tr>
               <th className="px-4 py-3">Roll No</th>
               <th className="px-4 py-3">Student</th>
               <th className="px-4 py-3">Tracking ID</th>
+              <th className="px-4 py-3">CNIC</th>
               <th className="px-4 py-3">Test Type</th>
               <th className="px-4 py-3">Center</th>
               <th className="px-4 py-3">Date</th>
@@ -209,6 +253,7 @@ export default function AdminRollNumbersPage() {
                   <td className="px-4 py-3 font-semibold text-cyan-300">{r.roll_no}</td>
                   <td className="px-4 py-3 text-slate-200">{r.students?.full_name}</td>
                   <td className="px-4 py-3 text-slate-400">{r.students?.tracking_id}</td>
+                  <td className="px-4 py-3 text-slate-400">{r.students?.student_cnic}</td>
                   <td className="px-4 py-3">
                     <select
                       className="input-field !py-1 text-xs"
