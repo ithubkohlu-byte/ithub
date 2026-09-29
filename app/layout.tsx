@@ -1,5 +1,6 @@
 import FxLayer from "@/components/fx/FxLayer";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import PWARegister from "@/components/pwa/PWARegister";
 import { Space_Grotesk, Inter } from "next/font/google";
 import { createClient } from "@/lib/supabase/server";
 import "./globals.css";
@@ -10,6 +11,13 @@ const display = Space_Grotesk({
   weight: ["500", "600", "700"],
 });
 const body = Inter({ subsets: ["latin"], variable: "--font-body" });
+
+export const viewport: Viewport = {
+  themeColor: "#05070d",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 export async function generateMetadata(): Promise<Metadata> {
   const supabase = createClient();
@@ -23,7 +31,13 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: siteTitle,
     description: siteDescription,
-    icons: logoUrl ? { icon: logoUrl } : undefined,
+    manifest: "/manifest.webmanifest",
+    applicationName: instituteName,
+    appleWebApp: { capable: true, title: "IT HUB", statusBarStyle: "black-translucent" },
+    icons: {
+      icon: logoUrl || "/icons/icon-192.png",
+      apple: "/icons/apple-touch-icon.png",
+    },
     openGraph: {
       title: siteTitle,
       description: siteDescription,
@@ -61,6 +75,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="font-body antialiased">
         <FxLayer />
         {children}
+        <PWARegister />
       </body>
     </html>
   );
