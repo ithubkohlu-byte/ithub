@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Student, Course } from "@/types";
-import { Ban, Download, Eye, Search, UserCheck, UserX } from "lucide-react";
+import { Ban, Download, Eye, Search, UserCheck, UserX, Users } from "lucide-react";
 import EnrollModal from "@/components/admin/EnrollModal";
 import * as XLSX from "xlsx";
+import { SkeletonTableRows } from "@/components/ui/Skeleton";
+import EmptyState from "@/components/ui/EmptyState";
+import PaginationBar, { usePagination } from "@/components/ui/Pagination";
 
 type Row = Student & { enrollments: { course_name: string; batches: { batch_name: string } }[] };
 
@@ -65,6 +68,8 @@ export default function AdminStudentsPage() {
       return matchesSearch && matchesCourse && matchesStatus;
     });
   }, [rows, search, courseFilter, statusFilter]);
+
+  const { page, pageCount, pageItems, setPage, total } = usePagination(filtered, 10);
 
   function buildExportRows() {
     return filtered.map((r) => ({
@@ -156,9 +161,19 @@ export default function AdminStudentsPage() {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td className="px-4 py-6 text-slate-500" colSpan={9}>Loading...</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td className="px-4 py-6 text-slate-500" colSpan={9}>No students found.</td></tr>}
-            {filtered.map((r) => (
+            {loading && <SkeletonTableRows rows={6} cols={9} />}
+            {!loading && filtered.length === 0 && (
+              <tr>
+                <td colSpan={9}>
+                  <EmptyState
+                    icon={Users}
+                    title="No students found"
+                    description={search || courseFilter || statusFilter ? "Try adjusting your search or filters." : "Applications will show up here once students apply."}
+                  />
+                </td>
+              </tr>
+            )}
+            {!loading && pageItems.map((r) => (
               <tr key={r.id} className="border-b border-white/5">
                 <td className="px-4 py-3">
                   {r.photo_url ? (
@@ -208,6 +223,7 @@ export default function AdminStudentsPage() {
             ))}
           </tbody>
         </table>
+        <PaginationBar page={page} pageCount={pageCount} onPageChange={setPage} total={total} pageSize={10} />
       </div>
 
       {enrollFor && (

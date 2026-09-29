@@ -10,6 +10,7 @@ import { generateAdmissionLetter } from "@/lib/pdf";
 import { Loader2, UploadCloud, CheckCircle2, Download, LayoutDashboard, MegaphoneOff, CheckCircle, XCircle, Plus, Trash2 } from "lucide-react";
 import PasswordInput from "@/components/PasswordInput";
 import OAuthButtons from "@/components/OAuthButtons";
+import { accountSchema, personalInfoSchema, academicInfoSchema, firstError } from "@/lib/validations";
 
 type FormState = {
   full_name: string;
@@ -180,9 +181,10 @@ export default function ApplyWizard() {
 
   async function submitStep1() {
     setError(null);
-    if (!/^[A-Za-z0-9_]{3,20}$/.test(form.username)) {
-      return setError("Username must be 3-20 characters: letters, numbers, or underscore only.");
-    }
+    // Password is only mandatory on the email/password path (oauthMode skips it).
+    const accountCheck = accountSchema.safeParse(oauthMode ? { ...form, password: "", confirm_password: "" } : form);
+    const accountErr = firstError(accountCheck);
+    if (accountErr) return setError(accountErr);
     if (usernameStatus === "taken") return setError("That username is already taken.");
 
     // ----- Path A: continuing an OAuth sign-in that has no profile yet -----
@@ -259,6 +261,8 @@ export default function ApplyWizard() {
   async function submitStep2() {
     if (!studentId) return;
     setError(null);
+    const err0 = firstError(personalInfoSchema.safeParse(form));
+    if (err0) return setError(err0);
     setLoading(true);
     try {
       const { error: err } = await supabase
@@ -306,6 +310,9 @@ export default function ApplyWizard() {
   async function submitStep3() {
     if (!studentId) return;
     setError(null);
+
+    const matricErr = firstError(academicInfoSchema.safeParse(form));
+    if (matricErr) return setError(matricErr);
 
     // FSc (or equivalent) is the minimum qualification for admission — the
     // application cannot move forward without it.

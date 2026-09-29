@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Loader2, Mail, Lock, User, AtSign, Phone, Eye, EyeOff, ArrowRight, Check, X } from "lucide-react";
 import OAuthButtons from "@/components/OAuthButtons";
+import { loginSchema, signupSchema, firstError } from "@/lib/validations";
 
 type Mode = "login" | "signup";
 type UStatus = "idle" | "checking" | "ok" | "taken" | "invalid";
@@ -88,6 +89,8 @@ export default function AuthCard({ initialMode = "login" }: { initialMode?: Mode
   }
 
   async function login() {
+    const err0 = firstError(loginSchema.safeParse({ identifier: f.identifier, password: f.password }));
+    if (err0) throw new Error(err0);
     let email = f.identifier.trim();
     if (email && !email.includes("@")) {
       const { data, error: e } = await supabase.rpc("get_email_by_username", { p_username: email });
@@ -101,10 +104,12 @@ export default function AuthCard({ initialMode = "login" }: { initialMode?: Mode
   }
 
   async function signup() {
-    if (!/^[A-Za-z0-9_]{3,20}$/.test(f.username)) throw new Error("Username must be 3-20 characters: letters, numbers, or underscore only.");
+    const err0 = firstError(
+      signupSchema.safeParse({ full_name: f.full_name, username: f.username, email: f.email, phone: f.phone, confirm: f.password })
+    );
+    if (err0) throw new Error(err0);
     if (uStatus === "taken") throw new Error("That username is already taken.");
     if (f.password !== f.confirm) throw new Error("Passwords do not match.");
-    if (f.password.length < 6) throw new Error("Password must be at least 6 characters.");
     const { data, error: signErr } = await supabase.auth.signUp({
       email: f.email,
       password: f.password,
