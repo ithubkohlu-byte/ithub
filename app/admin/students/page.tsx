@@ -31,6 +31,8 @@ export default function AdminStudentsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [enrollFor, setEnrollFor] = useState<Row | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [rejectFor, setRejectFor] = useState<Row | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   async function load() {
     setLoading(true);
@@ -47,12 +49,27 @@ export default function AdminStudentsPage() {
     load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function setStatus(r: Row, status: "rejected" | "struck_off") {
-    const label = status === "rejected" ? "Reject" : "Strike off";
-    if (!confirm(`${label} ${r.full_name}?`)) return;
+  async function setStatus(r: Row, status: "struck_off") {
+    if (!confirm(`Strike off ${r.full_name}?`)) return;
     setBusyId(r.id);
     await supabase.from("students").update({ application_status: status }).eq("id", r.id);
     setBusyId(null);
+    load();
+  }
+
+  // Rejecting always asks for a reason first (see the modal below), so the
+  // student sees WHY on their dashboard instead of a bare "Rejected" badge.
+  async function confirmReject() {
+    if (!rejectFor) return;
+    if (!rejectReason.trim()) return; // reason is required — the Reject button below is disabled without it too
+    setBusyId(rejectFor.id);
+    await supabase
+      .from("students")
+      .update({ application_status: "rejected", rejection_reason: rejectReason.trim() })
+      .eq("id", rejectFor.id);
+    setBusyId(null);
+    setRejectFor(null);
+    setRejectReason("");
     load();
   }
 
@@ -190,9 +207,17 @@ export default function AdminStudentsPage() {
                 <td className="px-4 py-3 text-slate-400">{r.enrollments?.[0]?.course_name ?? "-"}</td>
                 <td className="px-4 py-3 text-slate-400">{r.enrollments?.[0]?.batches?.batch_name ?? "-"}</td>
                 <td className="px-4 py-3">
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${STATUS_BADGE[r.application_status] ?? "bg-white/10 text-slate-300"}`}>
+                  <span
+                    title={r.application_status === "rejected" ? r.rejection_reason ?? "" : undefined}
+                    className={`rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${STATUS_BADGE[r.application_status] ?? "bg-white/10 text-slate-300"}`}
+                  >
                     {r.application_status.replace("_", " ")}
                   </span>
+                  {r.application_status === "rejected" && r.rejection_reason && (
+                    <p className="mt-1 max-w-[180px] truncate text-xs text-slate-500" title={r.rejection_reason}>
+                      {r.rejection_reason}
+                    </p>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1.5">
@@ -203,7 +228,7 @@ export default function AdminStudentsPage() {
                       </button>
                     )}
                     {r.application_status !== "rejected" && (
-                      <button onClick={() => setStatus(r, "rejected")} disabled={busyId === r.id} title="Reject student"
+                      <button onClick={() => { setRejectFor(r); setRejectReason(""); }} disabled={busyId === r.id} title="Reject student"
                         className="flex items-center gap-1 rounded-md bg-red-500/15 px-2 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/25">
                         <UserX size={13} /> Reject
                       </button>
@@ -233,6 +258,36 @@ export default function AdminStudentsPage() {
           onClose={() => setEnrollFor(null)}
           onDone={() => { setEnrollFor(null); load(); }}
         />
+      )}
+
+      {rejectFor && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={() => setRejectFor(null)}>
+          <div className="glass-card w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="mb-1 font-display text-lg font-semibold text-white">Reject {rejectFor.full_name}</h2>
+            <p className="mb-4 text-xs text-slate-500">
+              This reason will be shown to the student on their dashboard, so please be clear and respectful.
+            </p>
+            <textarea
+              className="input-field h-28"
+              placeholder="e.g. Matric marks below the minimum eligibility requirement for this course."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              autoFocus
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setRejectFor(null)} className="btn-outline !px-4 !py-2">
+                Cancel
+              </button>
+              <button
+                onClick={confirmReject}
+                disabled={!rejectReason.trim() || busyId === rejectFor.id}
+                className="flex items-center gap-1.5 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <UserX size={14} /> {busyId === rejectFor.id ? "Rejecting..." : "Confirm Reject"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

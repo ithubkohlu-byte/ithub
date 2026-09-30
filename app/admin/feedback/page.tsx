@@ -53,7 +53,14 @@ export default function AdminFeedbackPage() {
           <div key={r.id} className="glass-card p-6">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p className="font-semibold text-white">{r.students?.full_name ?? r.student_name ?? "Unknown student"}</p>
+                <p className="flex items-center gap-2 font-semibold text-white">
+                  {r.is_guest ? r.guest_name : r.students?.full_name ?? r.student_name ?? "Unknown student"}
+                  {r.is_guest && (
+                    <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+                      Visitor
+                    </span>
+                  )}
+                </p>
                 <p className="text-xs text-slate-500">{r.students?.tracking_id}</p>
               </div>
               <div className="flex items-center gap-3">

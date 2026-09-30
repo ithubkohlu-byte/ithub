@@ -25,6 +25,8 @@ export default function AdminStudentDetailPage() {
   const [showReset, setShowReset] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const [showRejectBox, setShowRejectBox] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   // ---- Trade (course) change ----
   const [editingTrade, setEditingTrade] = useState(false);
@@ -119,7 +121,22 @@ export default function AdminStudentDetailPage() {
   }
 
   async function setAppStatus(status: ApplicationStatus) {
+    if (status === "rejected") {
+      setShowRejectBox(true);
+      return;
+    }
     await supabase.from("students").update({ application_status: status }).eq("id", id);
+    load();
+  }
+
+  async function confirmRejectWithReason() {
+    if (!rejectReason.trim()) return;
+    await supabase
+      .from("students")
+      .update({ application_status: "rejected", rejection_reason: rejectReason.trim() })
+      .eq("id", id);
+    setShowRejectBox(false);
+    setRejectReason("");
     load();
   }
 
@@ -162,6 +179,39 @@ export default function AdminStudentDetailPage() {
           <button onClick={() => setShowReset(true)} className="btn-outline !py-2 text-xs"><Key size={14} /> Reset Password</button>
         </div>
       </div>
+
+      {showRejectBox && (
+        <div className="glass-card mb-6 p-6">
+          <h3 className="mb-1 font-semibold text-white">Reason for rejecting {student.full_name}</h3>
+          <p className="mb-3 text-xs text-slate-500">This will be shown to the student on their dashboard.</p>
+          <textarea
+            className="input-field h-24"
+            placeholder="e.g. Matric marks below the minimum eligibility requirement for this course."
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            autoFocus
+          />
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={confirmRejectWithReason}
+              disabled={!rejectReason.trim()}
+              className="rounded-lg bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Confirm Reject
+            </button>
+            <button onClick={() => { setShowRejectBox(false); setRejectReason(""); }} className="btn-outline !py-2 text-xs">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {student.application_status === "rejected" && student.rejection_reason && (
+        <div className="glass-card mb-6 border border-red-500/30 bg-red-500/5 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-red-300">Rejection reason</p>
+          <p className="mt-1 text-sm text-slate-300">{student.rejection_reason}</p>
+        </div>
+      )}
 
       {showReset && (
         <div className="glass-card mb-6 p-6">

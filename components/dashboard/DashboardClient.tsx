@@ -353,6 +353,12 @@ export default function DashboardClient({
                         ? "Your application was not accepted. Please contact the office if you think this is a mistake."
                         : "Your name has been struck off the roll. Please contact the office for details."}
                     </p>
+                    {st === "rejected" && student.rejection_reason && (
+                      <div className="mt-2 rounded-md bg-black/20 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-red-300/70">Reason</p>
+                        <p className="mt-0.5 text-xs text-slate-300">{student.rejection_reason}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (

@@ -93,6 +93,7 @@ export interface Student {
   username: string | null;
   auth_provider: "password" | "google" | "facebook" | "github";
   application_status: ApplicationStatus;
+  rejection_reason?: string | null;
   onboarding_step: number;
   id_card_rejected?: boolean;
   created_at: string;
@@ -248,7 +249,9 @@ export interface SitePage {
 
 export interface Feedback {
   id: string;
-  student_id: string;
+  student_id: string | null;
+  is_guest?: boolean;
+  guest_name?: string | null;
   student_name: string | null;
   message: string;
   rating: number | null;

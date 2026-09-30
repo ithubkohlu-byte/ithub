@@ -173,6 +173,7 @@ create table if not exists public.students (
   auth_provider text not null default 'password', -- 'password' | 'google' | 'facebook' | 'github'
   application_status application_status not null default 'pending',
   onboarding_step int not null default 1, -- tracks progress through the 5-step form
+  rejection_reason text, -- set by admin when application_status is set to 'rejected'; shown to the student
   created_at timestamptz default now()
 );
 
@@ -306,7 +307,12 @@ create table if not exists public.dashboard_tabs (
 -- ---------- admin-approved ones show up as public reviews on the website) ----------
 create table if not exists public.feedback (
   id uuid primary key default uuid_generate_v4(),
-  student_id uuid not null references public.students(id) on delete cascade,
+  -- Nullable: a logged-in student's review is tied to their account (student_id set,
+  -- is_guest = false); a site visitor with no account leaves a guest review instead
+  -- (student_id null, is_guest = true, guest_name required — see the check below).
+  student_id uuid references public.students(id) on delete cascade,
+  is_guest boolean not null default false,
+  guest_name text,
   -- Snapshot of the student's name at submit time, so the public reviews
   -- section can display it without needing read access to public.students.
   student_name text,
@@ -315,7 +321,8 @@ create table if not exists public.feedback (
   -- Admin approval gate: only approved rows are shown on the public
   -- "Student Reviews" section on the website.
   is_approved boolean not null default false,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  constraint feedback_guest_name_check check (is_guest = false or (guest_name is not null and length(trim(guest_name)) > 0))
 );
 
 -- Auto-fill student_name from the students table on insert if not provided.
@@ -471,7 +478,10 @@ create policy "feedback public read approved" on public.feedback
   for select using (is_approved = true);
 drop policy if exists "feedback self insert" on public.feedback;
 create policy "feedback self insert" on public.feedback
-  for insert with check (student_id = auth.uid());
+  for insert with check (
+    (is_guest = false and student_id = auth.uid())
+    or (is_guest = true and student_id is null and is_approved = false)
+  );
 drop policy if exists "feedback admin update" on public.feedback;
 create policy "feedback admin update" on public.feedback
   for update using (public.is_admin());
