@@ -56,7 +56,14 @@ export default function AdminIdCardsPage() {
     ]);
     setAllStudents((everyone as any[]) ?? []);
     const issuedIds = new Set((cardRows ?? []).map((c: any) => c.student_id));
-    setEnrolled(((students as EnrolledStudent[]) ?? []).filter((s) => !issuedIds.has(s.id)));
+    // Rejected cards are excluded so Bulk Issue / the dropdown can't re-issue
+    // them by accident. Re-issue is still possible from "All Students" below.
+    const rejectedIds = new Set(
+      ((everyone as any[]) ?? []).filter((s) => s.id_card_rejected).map((s) => s.id)
+    );
+    setEnrolled(
+      ((students as EnrolledStudent[]) ?? []).filter((s) => !issuedIds.has(s.id) && !rejectedIds.has(s.id))
+    );
     setCards((cardRows as IdCardRow[]) ?? []);
     setLoading(false);
   }
@@ -129,8 +136,8 @@ export default function AdminIdCardsPage() {
       const { error: e0 } = await supabase.from("students").update({ application_status: "enrolled" }).eq("id", st.id);
       if (e0) { setMsg(`❌ ${e0.message}`); setRowBusy(null); return; }
     }
-    const error = await issueOne(st.id);
     await supabase.from("students").update({ id_card_rejected: false }).eq("id", st.id);
+    const error = await issueOne(st.id);
     setRowBusy(null);
     setMsg(error ? `❌ ${error.message}` : `✅ Card issued to ${st.full_name}.`);
     load();

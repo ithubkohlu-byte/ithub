@@ -5,7 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { generateIdCardPdf } from "@/lib/pdf";
 import StudentIdCard from "@/components/StudentIdCard";
-import { Loader2, Search, SearchX, Zap } from "lucide-react";
+import { Loader2, Search, SearchX, ShieldX, Zap } from "lucide-react";
 import type { HomeContent } from "@/types";
 
 // Shape of one row returned by the lookup_id_card(cnic) RPC. Only the fields
@@ -44,6 +44,7 @@ export default function IdCardPage({ searchParams }: { searchParams: { cnic?: st
   const [query, setQuery] = useState(searchParams.cnic ?? "");
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [rejected, setRejected] = useState(false);
   const [result, setResult] = useState<LookupRow | null>(null);
   const [home, setHome] = useState<HomeContent | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -60,11 +61,20 @@ export default function IdCardPage({ searchParams }: { searchParams: { cnic?: st
   async function runSearch(cnic: string) {
     setLoading(true);
     setNotFound(false);
+    setRejected(false);
     setResult(null);
     const { data } = await supabase.rpc("lookup_id_card", { p_cnic: cnic.trim() });
     const row = (data as LookupRow[] | null)?.[0] ?? null;
     setResult(row);
-    setNotFound(!row);
+    if (!row) {
+      // No issued card: check whether the admin rejected/disabled it.
+      const { data: rej } = await supabase.rpc("is_id_card_rejected", { p_cnic: cnic.trim() });
+      if (rej) {
+        setRejected(true);
+      } else {
+        setNotFound(true);
+      }
+    }
     setLoading(false);
   }
 
@@ -143,6 +153,17 @@ export default function IdCardPage({ searchParams }: { searchParams: { cnic?: st
             </button>
           </form>
         </div>
+
+        {rejected && (
+          <div className="glass-card mt-6 flex flex-col items-center gap-3 border border-red-500/30 p-8 text-center">
+            <ShieldX className="text-red-400" size={40} />
+            <h2 className="font-display text-lg font-semibold text-red-300">Card Rejected</h2>
+            <p className="text-sm text-slate-300">This card has been rejected by administration.</p>
+            <p className="text-xs text-slate-400">
+              This ID card is not valid. Please contact the institute office for more information.
+            </p>
+          </div>
+        )}
 
         {notFound && (
           <div className="glass-card mt-6 flex flex-col items-center gap-3 p-8 text-center">
